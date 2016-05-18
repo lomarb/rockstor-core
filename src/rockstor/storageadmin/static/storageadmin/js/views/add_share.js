@@ -37,7 +37,7 @@ AddShareView = Backbone.View.extend({
     var _this = this;
     this.pools = new PoolCollection();
     this.pools.pageSize = RockStorGlobals.maxPageSize;
-    this.poolName = this.options.poolName;
+    this.preSelectedPoolName = this.options.poolName || null;
     this.tickFormatter = function(d) {
       var formatter = d3.format(",.1f");
       if (d > 1024) {
@@ -51,6 +51,7 @@ AddShareView = Backbone.View.extend({
       var value = slider.value();
       _this.$('#share_size').val(_this.tickFormatter(value));
     }
+    this.initHandlebarHelpers();
   },
 
   render: function() {
@@ -59,7 +60,10 @@ AddShareView = Backbone.View.extend({
     var _this = this;
     this.pools.fetch({
       success: function(collection, response) {
-        $(_this.el).append(_this.template({pools: _this.pools, poolName: _this.poolName}));
+        $(_this.el).append(_this.template({
+          pools: _this.pools,
+          poolName: _this.poolName
+        }));
 
         var err_msg = '';
         var name_err_msg = function() {
@@ -68,18 +72,12 @@ AddShareView = Backbone.View.extend({
 
         $.validator.addMethod('validateShareName', function(value) {
             var share_name = $('#share_name').val();
-            if (share_name == "") {
-             err_msg = 'Please enter share name';
-              return false;
+	    if (/^[A-Za-z0-9_.-]+$/.test(share_name) == false) {
+            	err_msg = 'Please enter a valid share name ';
+                return false;
             }
-            else
-               if(/^[A-Za-z][A-Za-z0-9_.-]*$/.test(share_name) == false){
-            	 err_msg = 'Please enter a valid share name ';
-                 return false;
-                }
-
-                return true;
-          }, name_err_msg);
+	    return true;
+        }, name_err_msg);
 
         _this.renderSlider();
         _this.$('#pool_name').change(function(){
@@ -95,7 +93,7 @@ AddShareView = Backbone.View.extend({
 
           var sizeFormat = size.replace(/[^a-z]/gi, "");
           if (sizeFormat != '') {
-            var size_array = size.split(sizeFormat)
+              var size_array = size.split(sizeFormat);
             size_value = size_array[0];
           }
 
@@ -125,7 +123,7 @@ AddShareView = Backbone.View.extend({
             rules: {
               share_name: "validateShareName",
               share_size: {
-                required: true,
+                required: true
               },
             },
 
@@ -141,7 +139,7 @@ AddShareView = Backbone.View.extend({
 	      }
               var size = $('#share_size').val();
               var sizeFormat = size.replace(/[^a-z]/gi, "");
-              var size_array = size.split(sizeFormat)
+		var size_array = size.split(sizeFormat);
               var size_value = Math.round(size_array[0]);
 
               if(sizeFormat == 'TB' || sizeFormat == 'tb' || sizeFormat == 'Tb') {
@@ -201,6 +199,34 @@ AddShareView = Backbone.View.extend({
     event.preventDefault();
     this.$('#add-share-form :input').tooltip('hide');
     app_router.navigate('shares', {trigger: true})
+  },
+
+  initHandlebarHelpers: function(){
+    Handlebars.registerHelper('print_pool_names', function() {
+      var html = '';
+      if(this.preSelectedPoolName){
+        this.pools.each(function(pool, index) {
+          var poolName = pool.get('name');
+            if(preSelectedPoolName != pool.get('name')){
+                html += '<option value="' + poolName + '">' + poolName + '</option>';
+            } else{
+                html += '<option value="' + preSelectedPoolName + '" selected="selected">' + preSelectedPoolName + '</option>';
+            }
+        });
+  	  } else {
+        this.pools.each(function(pool, index) {
+          var poolName = pool.get('name');
+          //the pool with index zero is selected by default
+          if(index == 0){
+            html += '<option value="' + poolName + '" selected="selected">' + poolName + '</option>';
+          }else{
+             html += '<option value="' + poolName + '">' + poolName + '</option>';
+          }
+        });
+  	  }
+      return new Handlebars.SafeString(html);
+    });
+
   }
 
 });

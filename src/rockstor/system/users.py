@@ -19,12 +19,15 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 from exceptions import CommandException
 from osi import run_command
 import subprocess
+import fcntl
+import time
 import re
 import os
 import pwd
 import grp
 from shutil import move
 from tempfile import mkstemp
+import chardet
 
 import logging
 logger = logging.getLogger(__name__)
@@ -39,24 +42,57 @@ SMBPASSWD = '/usr/bin/smbpasswd'
 CHOWN = '/usr/bin/chown'
 
 
-def get_users(min_uid=5000, uname=None):
+#this is a hack for AD to get as many users as possible within 90 seconds.  If
+#there are several thousands of domain users and AD isn't that fast, winbind
+#takes a long time to enumerate the users for getent. Subsequent queries finish
+#faster because of caching. But this prevents timing out.
+def get_users(max_wait=90):
+    t0 = time.time()
     users = {}
-    for u in pwd.getpwall():
-        users[u.pw_name] = (u.pw_uid, u.pw_gid,)
+    p = subprocess.Popen(['/usr/bin/getent', 'passwd'], shell=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    fcntl.fcntl(p.stdout.fileno(), fcntl.F_SETFL, os.O_NONBLOCK)
+    alive = True
+    user_data = ''
+    while (alive):
+        try:
+            if (p.poll() is not None):
+                alive = False
+            user_data += p.stdout.read()
+        except IOError:
+            if (time.time() - t0 < max_wait):
+                continue
+        except Exception, e:
+            logger.exception(e)
+            p.terminate()
+        uf = user_data.split('\n')
+        #If the feed ends in \n, the last element will be '', if not, it will
+        #be a partial line to be processed next time around.
+        user_data = uf[-1]
+        for u in uf[:-1]:
+            ufields = u.split(':')
+            if (len(ufields) > 3):
+                charset = chardet.detect( ufields[0] )
+                uname = ufields[0].decode( charset['encoding'] )
+                users[uname] = (int(ufields[2]), int(ufields[3]))
+            if (time.time() - t0 > max_wait):
+                p.terminate()
+                break
     return users
-
 
 def get_groups(*gids):
     groups = {}
     if (len(gids) > 0):
         for g in gids:
             entry = grp.getgrgid(g)
-            groups[entry.gr_name] = entry.gr_gid
+            charset = chardet.detect( entry.gr_name )
+            gr_name = entry.gr_name.decode( charset['encoding'] )
+            groups[gr_name] = entry.gr_gid
     else:
         for g in grp.getgrall():
-            groups[g.gr_name] = g.gr_gid
+            charset = chardet.detect( g.gr_name )
+            gr_name = g.gr_name.decode( charset['encoding'] )
+            groups[gr_name] = g.gr_gid
     return groups
-
 
 def userdel(uname):
     try:

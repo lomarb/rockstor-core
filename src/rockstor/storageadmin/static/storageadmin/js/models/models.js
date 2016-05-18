@@ -88,7 +88,11 @@ var Share = Backbone.Model.extend({
 var ShareCollection = RockStorPaginatedCollection.extend({
     model: Share,
     baseUrl: '/api/shares',
-
+    extraParams: function() {
+        var p = this.constructor.__super__.extraParams.apply(this, arguments);
+        p['sortby'] = 'name';
+        return p;
+    } 
 });
 
 var Image = Backbone.Model.extend({
@@ -337,14 +341,23 @@ var ProbeCollection = Backbone.Collection.extend({
     }
 });
 
-var NetworkInterface = Backbone.Model.extend({
-    idAttribute: 'name',
-    urlRoot: '/api/network'
+
+var NetworkDevice = Backbone.Model.extend({
+    urlRoot: '/api/network/devices'
 });
 
-var NetworkInterfaceCollection = RockStorPaginatedCollection.extend({
-    model: NetworkInterface,
-    baseUrl: '/api/network'
+var NetworkDeviceCollection = RockStorPaginatedCollection.extend({
+    model: NetworkDevice,
+    baseUrl: '/api/network/devices'
+});
+
+var NetworkConnection = Backbone.Model.extend({
+    urlRoot: '/api/network/connections'
+});
+
+var NetworkConnectionCollection = RockStorPaginatedCollection.extend({
+    model: NetworkConnection,
+    baseUrl: '/api/network/connections'
 });
 
 var ProbeRun = Backbone.Model.extend({
@@ -638,6 +651,27 @@ var RockOnCustomConfigCollection = RockStorPaginatedCollection.extend({
 	    return '/api/rockons/customconfig/' + this.rid;
 	} else {
 	    return '/api/rockons/customconfig';
+	}
+    }
+});
+
+var RockOnEnvironment = Backbone.Model.extend({
+    urlRoot: '/api/rockon/environment/' + this.rid
+});
+
+var RockOnEnvironmentCollection = RockStorPaginatedCollection.extend({
+    model: RockOnEnvironment,
+    initialize: function(models, options) {
+	this.constructor.__super__.initialize.apply(this, arguments);
+	if (options) {
+	    this.rid = options.rid;
+	}
+    },
+    baseUrl: function() {
+	if (this.rid) {
+	    return '/api/rockons/environment/' + this.rid;
+	} else {
+	    return '/api/rockons/environment';
 	}
     }
 });

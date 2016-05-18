@@ -169,11 +169,21 @@ INSTALLED_APPS = (
 
 STATICFILES_STORAGE = 'pipeline.storage.PipelineCachedStorage'
 
+#yum install npm, then npm install yuglify, then ln -s ..../yuglify /usr/bin/yuglify
+#using yuglify compresses js and css to some extent. What do we do with .jst files?
+#PIPELINE_CSS_COMPRESSOR = 'pipeline.compressors.yuglify.YuglifyCompressor'
+#PIPELINE_JS_COMPRESSOR = 'pipeline.compressors.yuglify.YuglifyCompressor'
 PIPELINE_CSS_COMPRESSOR = None
 PIPELINE_JS_COMPRESSOR = None
 
+#for handlebars
+#PIPELINE_TEMPLATE_EXT = '.handlebars'
+PIPELINE_TEMPLATE_FUNC = 'Handlebars.compile'
+#PIPELINE_TEMPLATE_NAMESPACE = 'Handlebars.templates'
+
 # Don't wrap in anonymous function so that license is at the top.
 PIPELINE_DISABLE_WRAPPER = True
+
 
 PIPELINE_JS = {
     'storageadmin': {
@@ -190,6 +200,7 @@ PIPELINE_JS = {
             'storageadmin/js/graph.js',
             'storageadmin/js/d3.slider2.js',
             'storageadmin/js/models/models.js',
+            'storageadmin/js/views/common/*.js',
             'storageadmin/js/views/*.js',
             'storageadmin/js/views/pool/**/*.js',
             'storageadmin/js/views/dashboard/*.js',
@@ -313,13 +324,14 @@ END_UID = 6000
 VALID_SHELLS = ('${buildout:depdir}/bin/rcli', '/bin/bash', '/sbin/nologin',)
 
 SCHEDULER = ('127.0.0.1', ${django-settings-conf:schedulerport})
-REPLICA_DATA_PORT = ${django-settings-conf:reppubport}
-REPLICA_META_PORT = ${django-settings-conf:reprecvport}
-REPLICA_SINK_PORT = ${django-settings-conf:repsinkport}
-MAX_REPLICA_SEND_ATTEMPTS = 10
-DEFAULT_SEND_CREDIT = 1000
+REPLICATION = {
+	    'ipc_socket': '/var/run/replication.sock',
+	    'max_send_attempts': 10,
+	    'max_snap_retain': 5,
+	    'listener_port': 10002,
+}
 
-SHARE_REGEX = r'[A-Za-z0-9][A-Za-z0-9_.-]*'
+SHARE_REGEX = r'[A-Za-z0-9_.-]+'
 POOL_REGEX = SHARE_REGEX
 USERNAME_REGEX = r'[A-Za-z][-a-zA-Z0-9_]*$'
 ROOT_DIR = '${buildout:depdir}/'
@@ -356,8 +368,6 @@ COMPRESSION_TYPES = ('lzo', 'zlib', 'no',)
 SUPPORTED_KERNEL_VERSION = ${django-settings-conf:kernel}
 
 SNAP_TS_FORMAT = '%Y%m%d%H%M'
-ROOT_POOL = 'rockstor_rockstor'
-
 
 MODEL_DEFS = {
 	   'pqgroup': '-1/-1',
@@ -394,4 +404,16 @@ UPDATE_CHANNELS = {
 		'description': 'Subscription channel for testing updates',
 		'url': 'rockstor.com/rockrepo-testing',
 		},
+}
+
+ROCKONS = {
+	'remote_metastore': 'http://rockstor.com/rockons',
+	'remote_root': 'root.json',
+	'local_metastore': '${buildout:depdir}/rockons-metastore',
+}
+
+ZTASKD_URL = 'ipc:///var/run/rockon-ztaskd'
+
+TASK_SCHEDULER = {
+	       'max_log': 100 #max number of task log entries to keep
 }

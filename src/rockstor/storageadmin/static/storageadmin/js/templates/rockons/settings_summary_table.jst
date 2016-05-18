@@ -7,36 +7,34 @@
     <th>Mapped representation&nbsp;&nbsp<i class="fa fa-info-circle fa-lg" title="Name/representation of the resource inside the Rock-on. Eg: Shares map to directories, ports map to (possibly different)ports to send traffic to the Rock-on, etc.." rel="tooltip"></i></th>
   </tr>
 </thead>
-
-  <% volumes.each(function(volume, index) { %>
+{{#each volumes}}
     <tr>
-      <td>Share</td>
-      <td><%= volume.get('share_name') %></td>
-      <td><%= volume.get('dest_dir') %></td>
+        <td>Share</td>
+        <td>{{this.share_name}}</td>
+        <td>{{this.dest_dir}}</td>
     </tr>
-  <% }); %>
-
-  <% for (share in new_volumes) { %>
+{{/each}}
+{{display_newVolumes}}
+{{#each ports}}
     <tr>
-      <td><i>Share</i></td>
-      <td><i><%= new_volumes[share] %></i></td>
-      <td><i><%= share %></i></td>
+        <td>Port</td>
+        <td>{{this.hostp}}</td>
+        <td>{{this.containerp}}</td>
     </tr>
-  <% } %>
-
-  <% ports.each(function(port, index) { %>
+{{/each}}
+{{#each cc}}
     <tr>
-      <td>Port</td>
-      <td><%= port.get('hostp') %></td>
-      <td><%= port.get('containerp') %></td>
+        <td>Custom</td>
+        <td>{{this.val}}&nbsp;&nbsp<i class="fa fa-info-circle" title="{{this.description}}" rel="tooltip"></i></td>
+        <td>{{this.key}}</td>
     </tr>
-  <% }); %>
-
-  <% cc.each(function(cci, index) { %>
+{{/each}}
+{{#each env}}
     <tr>
-      <td>Custom</td>
-      <td><%= cci.get('val') %>&nbsp;&nbsp<i class="fa fa-info-circle" title="<%= cci.get('description') %>" rel="tooltip"></i></td>
-      <td><%= cci.get('key') %></td>
+        <td>Env</td>
+        <td>{{this.val}}&nbsp;&nbsp<i class="fa fa-info-circle" title="{{this.description}}" rel="tooltip"></i></td>
+        <td>{{this.key}}</td>
     </tr>
-  <% }); %>
+{{/each}}
+
 </table>

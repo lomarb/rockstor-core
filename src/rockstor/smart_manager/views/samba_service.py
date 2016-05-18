@@ -42,7 +42,13 @@ class SambaServiceView(BaseServiceDetailView):
         service_name = 'smb'
         service = Service.objects.get(name=service_name)
         if (command == 'config'):
-            #nothing to really configure atm. just save the model
+            aso = Service.objects.get(name='active-directory')
+            if (aso.config is not None):
+                e_msg = ('Active Directory service is configured, so '
+                         'Workgroup is automatically retrieved and cannot '
+                         'be set manually')
+                handle_exception(Exception(e_msg), request)
+
             try:
                 config = request.data.get('config', {'workgroup': 'MYGROUP',})
                 workgroup = config['workgroup']
@@ -68,8 +74,8 @@ class SambaServiceView(BaseServiceDetailView):
                         shutil.copy(ss_src, ss_dest)
                     systemctl('smb', 'enable')
                     systemctl('nmb', 'enable')
-                systemctl('smb', command)
                 systemctl('nmb', command)
+                systemctl('smb', command)
             except Exception, e:
                 e_msg = ('Failed to %s samba due to a system error: %s' % (command, e.__str__()))
                 handle_exception(Exception(e_msg), request)

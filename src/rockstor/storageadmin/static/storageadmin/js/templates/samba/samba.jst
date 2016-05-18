@@ -6,20 +6,7 @@
         <tr>
           <td><span class="h3">Samba Service&nbsp;&nbsp;&nbsp;</span></td>
           <td>
-            <% if (service.get('status')) { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="1" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start on" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } else { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="0" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } %>
-            <div class="command-status" data-service-name="<%= service.get('name') %>">&nbsp;</div>
+          <input type="checkbox" name="samba-export-checkbox" data-size="mini">
           </td>
         </tr>
       </table>
@@ -30,7 +17,7 @@
     <br>
     <div class="messages"></div>
     <!-- Content -->
-    <% if (collection.length > 0) { %>
+    {{#if collectionNotEmpty}}
       <table id="samba-exports-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of samba exports">
         <thead>
           <tr>
@@ -44,31 +31,23 @@
           </tr>
         </thead>
         <tbody>
-          <% collection.each(function(sambaShare) { %>
+          {{#each samba}}
             <tr>
-              <td><%= sambaShare.get('share') %></td>
-              <td><%= sambaShare.get('browsable') %></td>
-              <td><%= sambaShare.get('guest_ok') %></td>
-              <td><%= sambaShare.get('read_only') %></td>
-              <td>
-	      <% var userNames = _.reduce(sambaShare.get('admin_users'), function(s, user, i, list) { if (i < (list.length-1)) { return s + user.username + ',';} else { return s + user.username; } }, ''); %>
-	      <% if(userNames.length != 0){ %>
-	      <%= userNames %>
-	      <% }else {%>
-	      &nbsp;--
-	      <% } %>
-	      </td>
-              <td><%= sambaShare.get('comment') %></td>
-              <td>
-	      <a href="#samba/edit/<%= sambaShare.id %>"><i class="glyphicon glyphicon-pencil"></i></a>
-	      &nbsp;
-                <a href="#" class="delete-samba-export" data-share="<%= sambaShare.get('share') %>" data-id="<%= sambaShare.id %>"><i class="glyphicon glyphicon-trash"></i></a>
-              </td>
+                <td>{{this.share}}</td>
+                <td>{{this.browsable}}</td>
+                <td>{{this.guest_ok}}</td>
+                <td>{{this.read_only}}</td>
+                <td>{{getAdminUsers this.admin_users}}</td>
+                <td>{{this.comment}}</td>
+                <td>
+                    <a href="#samba/edit/{{this.id}}"><i class="glyphicon glyphicon-pencil"></i></a>&nbsp;
+                    <a href="#" class="delete-samba-export" data-share="{{this.share}}" data-id="{{this.id}}"><i class="glyphicon glyphicon-trash"></i></a>
+                </td>
             </tr>
-          <% }); %>
+          {{/each}}
         </tbody>
       </table>
-    <% } else { %>
+    {{else}}
       <table id="samba-exports-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of samba exports">
         <tbody>
           <tr>
@@ -78,11 +57,15 @@
           </tr>
         </tbody>
       </table>
-    <% } %>
-    <% if (freeShares.length > 0) { %>
+    {{/if}}
+    {{#if sharesNotEmpty}}
       <a href="#add-samba-export" id="add-samba-export" class="btn btn-primary"><i class="glyphicon glyphicon-edit "></i> Add Samba Export</a>
-    <% } else { %>
+    {{else}}
       <a  id="add-samba-export" class="btn btn-primary disabled" title="No shares available to export through Samba"><i class="glyphicon glyphicon-edit "></i> Add Samba Export</a>
-    <% } %>
+    {{/if}}
   </div>
+</div>
+
+<div>
+  {{pagination}}
 </div>

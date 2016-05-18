@@ -5,20 +5,7 @@
         <tr>
           <td><span class="h3">SFTP Service&nbsp;&nbsp;&nbsp;</span></td>
           <td>
-            <% if (service.get('status')) { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="1" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start on" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } else { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="0" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } %>
-            <div class="command-status" data-service-name="<%= service.get('name') %>">&nbsp;</div>
+            <input type="checkbox" name="sftp-service-checkbox" data-size="mini">
           </td>
         </tr>
       </table>
@@ -27,7 +14,7 @@
     	<strong>Warning! SFTP Service is not running</strong>. Clients won't be able to mount unless SFTP is running.
     </div>
     <div class="messages"></div>
-    <% if (sftp.length > 0) { %>
+    {{#if collectionNotEmpty}}
       <table id="sftp-shares-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of sftp shares">
         <thead>
           <tr>
@@ -37,25 +24,18 @@
           </tr>
         </thead>
         <tbody>
-          <% sftp.each(function(sftpShare) { %>
+          {{#each sftpShare}}
             <tr>
-              <td><%= sftpShare.get('share') %></td>
-              <td>
-                <% if (sftpShare.get('editable') == 'ro') { %>
-                  Read only
-                <% } else { %>
-                  Writable
-                <% } %>
-              </td>
-              <td>
-                <a href="#" class="delete-sftp-share" data-id="<%= sftpShare.id %>"><i class="glyphicon glyphicon-trash"></i></a>
-              </td>
+                <td>{{this.share}}</td>
+                <td>{{displaySftpPermission this.editable}}</td>
+                <td><a href="#" class="delete-sftp-share" data-id="{{this.id}}">
+                <i class="glyphicon glyphicon-trash"></i></a></td>
             </tr>
-          <% }); %>
+          {{/each}}
         </tbody>
       </table>
-      <div class="ph-pagination"></div>
-    <% } else { %>
+      {{pagination}}
+      {{else}}
       <table id="sftp-shares-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of sftp shares">
         <tbody>
           <tr>
@@ -65,15 +45,16 @@
           </tr>
         </tbody>
       </table>
-    <% } %>
+      {{/if}}
 
   </div>
 </div>
 
-<% if (freeShares.length > 0) { %>
-  <a href="#add-sftp-share" id="add-sftp-share" class="btn btn-primary"><i class="glyphicon glyphicon-edit "></i> Add SFTP Share</a>
-<% } else { %>
-  <a  id="add-sftp-share" class="btn btn-primary disabled" title="No shares available to export via SFTP"><i class="glyphicon glyphicon-edit "></i> Add SFTP Share</a>
-
-<% } %>
+<a id="add-sftp-share" class="btn btn-primary"
+    {{#if sharesNotEmpty}}
+        href="#add-sftp-share">
+    {{else}}
+        disabled="disabled" title="No shares available to export via SFTP">
+    {{/if}}
+<i class="glyphicon glyphicon-edit "></i> Add SFTP Share</a>
 

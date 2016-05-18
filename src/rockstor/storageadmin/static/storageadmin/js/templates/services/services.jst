@@ -19,7 +19,6 @@
   */
 </script>
 
-
 <div id="messages"></div>
 <div class="row">
   <div class="col-md-12">
@@ -27,7 +26,7 @@
     <br>
     <div id="services-list">
       <div id="service">
-        <table id="services-table" class="table table-condensed table-bordered table-hover table-striped tablesorter" width="100%">
+        <table id="services-table" class="table table-bordered table-striped table-condensed data-table" width="100%">
           <thead>
             <tr>
               <th scope="col">Name</th>
@@ -35,31 +34,25 @@
             </tr>
           </thead>
           <tbody>
-            <% services.each(function(service) { %>
-            <tr id="<%= service.get('name') %>">
-              <td>
-                <%= service.get('display_name') %>&nbsp;
-		<% if (configurable_services.indexOf(service.get('name')) > -1) { %>
-                <a href="#" class="configure" data-service-name="<%= service.get('name') %>"><i class="glyphicon glyphicon-wrench"></i></a>&nbsp;
-                <% } %>
-		<% if (service.get('name') == 'active-directory') { %>
-		<i class="fa fa-info-circle" title="By turning this service on, the system will attempt to join Active Directory domain using the credentials provided during configuration. Note that domain user/group information is not listed anywhere in the Web-UI. However, domain users should be able to access Samba Shares and domain Administrators can set permissions from Windows computers. For support, contact support@rockstor.com"></i>
-		<% } %>
-	      </td>
-              <td id="<%= service.get('name') %>-status">
-                <% if (service.get('status')) { %>
-                <input type="checkbox" data-service-name="<%= service.get('name') %>" data-size="mini" checked>
-                <% } else { %>
-                <input type="checkbox" data-service-name="<%= service.get('name') %>" data-size="mini">
-                <% } %>
-                <div class="command-status" data-service-name="<%= service.get('name') %>">&nbsp;</div>
-                <div class="simple-overlay" id="<%= service.get('name') %>-err-popup"><div class="overlay-content"></div></div>
-              </td>
-            </tr>
-            <% }); %>
+          {{#each servicesColl}}
+          <tr id="{{this.name}}">
+            <td>{{this.display_name}} &nbsp;
+                {{#isServiceConfigurable this.name}}
+                    <a href="#" class="configure" data-service-name="{{this.name}}"><i class="glyphicon glyphicon-wrench"></i></a>&nbsp;
+                {{/isServiceConfigurable}}
+                {{#isServiceAD this.name}}
+                    <i class="fa fa-info-circle" title="By turning this service on, the system will attempt to join the Active Directory domain using the credentials provided during configuration."></i>
+                {{/isServiceAD}}
+             </td>
+             <td id="{{this.name}}-status">
+                <input type="checkbox" data-service-name="{{this.name}}" data-size="mini" {{#if this.status}} checked {{/if}}>
+                <div class="command-status" data-service-name="{{this.name}}">&nbsp;</div>
+                <div class="simple-overlay" id="{{this.name}}-err-popup"><div class="overlay-content"></div></div>
+             </td>
+          </tr>
+          {{/each}}
           </tbody>
         </table>
-        <div class="ph-pagination"></div>
       </div>
     </div>
   </div>

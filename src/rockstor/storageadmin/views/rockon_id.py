@@ -21,7 +21,7 @@ from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Q
 from storageadmin.models import (RockOn, DContainer, DVolume, Share, DPort,
-                                 DCustomConfig)
+                                 DCustomConfig, DContainerEnv)
 from storageadmin.serializers import RockOnSerializer
 import rest_framework_custom as rfc
 from storageadmin.util import handle_exception
@@ -37,6 +37,14 @@ class RockOnIdView(rfc.GenericView):
 
     def get_queryset(self, *args, **kwargs):
         return RockOn.objects.all()
+
+    @staticmethod
+    def _next_available_default_hostp(port):
+        while (True):
+            if (DPort.objects.filter(hostp=port).exists()):
+                port += 1
+            else:
+                return port
 
     @staticmethod
     def _pending_check(request):
@@ -82,6 +90,7 @@ class RockOnIdView(rfc.GenericView):
                 share_map = request.data.get('shares', {})
                 port_map = request.data.get('ports', {})
                 cc_map = request.data.get('cc', {})
+                env_map = request.data.get('environment', {})
                 containers = DContainer.objects.filter(rockon=rockon)
                 for co in containers:
                     for s in share_map.keys():
@@ -98,19 +107,29 @@ class RockOnIdView(rfc.GenericView):
                     # {'host_port' : 'container_port', ... }
                     for p in port_map.keys():
                         if (DPort.objects.filter(hostp=p).exists()):
-                            po = DPort.objects.get(hostp=p)
-                            if (po.container.rockon.id != rockon.id):
-                                e_msg = ('Rock-on port(%s) is dedicated to '
-                                         'another Rock-On(%s) and cannot '
-                                         'be changed. Choose a different name'
-                                         % (p, po.container.rockon.name))
-                                handle_exception(Exception(e_msg), request)
-                        else:
-                            for co2 in DContainer.objects.filter(rockon=rockon):
-                                if (DPort.objects.filter(container=co2, containerp=port_map[p]).exists()):
-                                    po = DPort.objects.get(container=co2, containerp=port_map[p])
-                                    po.hostp = p
-                                    po.save()
+                            dup_po = DPort.objects.get(hostp=p)
+                            if (dup_po.container.rockon.id != rockon.id):
+                                if (dup_po.container.rockon.state in
+                                    ('installed', 'pending_install')):
+                                    #cannot claim from a rock-on that's installed.
+                                    conf_ro = dup_po.container.rockon.name
+                                    e_msg = (
+                                        'Port(%s) belongs to another '
+                                        'Rock-n(%s). Choose a different '
+                                        'port. If you must choose the same '
+                                        'port, uninstall %s first and try again.'
+                                        % (p, conf_ro, conf_ro))
+                                    handle_exception(Exception(e_msg), request)
+                                #change the host port to next available.
+                                dup_po.hostp = self._next_available_default_hostp(dup_po.hostp)
+                                dup_po.save()
+                        for co2 in DContainer.objects.filter(rockon=rockon):
+                            if (DPort.objects.filter(container=co2, containerp=port_map[p]).exists()):
+                                #found the container that needs this port.
+                                po = DPort.objects.get(container=co2, containerp=port_map[p])
+                                po.hostp = p
+                                po.save()
+                                break
                     for c in cc_map.keys():
                         if (not DCustomConfig.objects.filter(rockon=rockon, key=c).exists()):
                             e_msg = ('Invalid custom config key(%s)' % c)
@@ -118,6 +137,13 @@ class RockOnIdView(rfc.GenericView):
                         cco = DCustomConfig.objects.get(rockon=rockon, key=c)
                         cco.val = cc_map[c]
                         cco.save()
+                    for e in env_map.keys():
+                        if (not DContainerEnv.objects.filter(container=co, key=e).exists()):
+                            e_msg = ('Invalid environment variabled(%s)' % e)
+                            handle_exception(Exception(e_msg), request)
+                        ceo = DContainerEnv.objects.get(container=co, key=e)
+                        ceo.val = env_map[e]
+                        ceo.save()
                 install.async(rockon.id)
                 rockon.state = 'pending_install'
                 rockon.save()
@@ -125,12 +151,12 @@ class RockOnIdView(rfc.GenericView):
                 self._pending_check(request)
                 if (rockon.state != 'installed'):
                     e_msg = ('Rock-on(%s) is not currently installed. Cannot '
-                             'uninstall it' % rid)
+                             'uninstall it' % rockon.name)
                     handle_exception(Exception(e_msg), request)
                 if (rockon.status == 'started' or rockon.status == 'pending_start'):
                     e_msg = ('Rock-on(%s) must be stopped before it can '
                              'be uninstalled. Stop it and try again' %
-                             rid)
+                             rockon.name)
                     handle_exception(Exception(e_msg), request)
                 uninstall.async(rockon.id)
                 rockon.state = 'pending_uninstall'
@@ -141,12 +167,12 @@ class RockOnIdView(rfc.GenericView):
                 self._pending_check(request)
                 if (rockon.state != 'installed'):
                     e_msg = ('Rock-on(%s) is not currently installed. Cannot '
-                             'update it' % rid)
+                             'update it' % rockon.name)
                     handle_exception(Exception(e_msg), request)
                 if (rockon.status == 'started' or rockon.status == 'pending_start'):
                     e_msg = ('Rock-on(%s) must be stopped before it can '
                              'be updated. Stop it and try again' %
-                             rid)
+                             rockon.name)
                     handle_exception(Exception(e_msg), request)
                 share_map = request.data.get('shares')
                 for co in DContainer.objects.filter(rockon=rockon):

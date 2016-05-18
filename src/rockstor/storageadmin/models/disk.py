@@ -18,6 +18,8 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 from django.db import models
 from storageadmin.models import Pool
+from system.osi import get_disk_power_status, get_dev_byid_name, \
+    read_hdparm_setting, get_disk_APM_level
 
 
 class Disk(models.Model):
@@ -40,11 +42,43 @@ class Disk(models.Model):
     vendor = models.CharField(max_length=1024, null=True)
     smart_available = models.BooleanField(default=False)
     smart_enabled = models.BooleanField(default=False)
+    """custom smart options for drive, ie for USB bridges / enclosures
+    eg "-d usbjmicron,p" or "-s on -d 3ware,0".
+    """
+    smart_options = models.CharField(max_length=64, null=True)
+    """role is json formatted aux info to flag special use disks
+    ie "import" or "backup" flags for temp external drive connection.
+    Also flags mdraid status eg {"mdraid": "isw_raid_member"} or
+    {"mdraid": "linux_raid_member"}.
+    role can be Null if no flags are in use.
+    """
+    role = models.CharField(max_length=256, null=True)
 
     @property
     def pool_name(self, *args, **kwargs):
         try:
             return self.pool.name
+        except:
+            return None
+
+    @property
+    def power_state(self, *args, **kwargs):
+        try:
+            return get_disk_power_status(str(self.name))
+        except:
+            return None
+
+    @property
+    def hdparm_setting(self, *args, **kwargs):
+        try:
+            return read_hdparm_setting(get_dev_byid_name(self.name))
+        except:
+            return None
+
+    @property
+    def apm_level(self, *args, **kwargs):
+        try:
+            return get_disk_APM_level(str(self.name))
         except:
             return None
 

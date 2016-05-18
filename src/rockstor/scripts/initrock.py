@@ -20,12 +20,16 @@ import os
 import shutil
 os.environ['DJANGO_SETTINGS_MODULE'] = 'settings'
 from system.osi import (run_command, md5sum)
+from system import services
 import logging
 import sys
 import re
 import time
+import json
 from tempfile import mkstemp
 from django.conf import settings
+from system.pkg_mgmt import downgrade_pkgs
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,53 +43,109 @@ PREP_DB = '%s/prep_db' % BASE_BIN
 SUPERCTL = '%s/supervisorctl' % BASE_BIN
 OPENSSL = '/usr/bin/openssl'
 GRUBBY = '/usr/sbin/grubby'
+RPM = '/usr/bin/rpm'
+YUM = '/usr/bin/yum'
+
+
+def delete_old_kernels(logging, num_retain=5):
+    #Don't keep more than num_retain kernels
+    o, e, rc = run_command([RPM, '-q', 'kernel-ml'])
+    ml_kernels = o[:-1] #last entry is an empty string.
+    ml_kernels = sorted(ml_kernels)
+    #centos kernels, may or may not be installed.
+    centos_kernels = []
+    o, e, rc = run_command([RPM, '-q', 'kernel'], throw=False)
+    if (rc == 0): centos_kernels = o[:-1]
+
+    #Don't delete current running kernel
+    #Don't delete current default kernel
+    running_kernel = os.uname()[2]
+    default_kernel = settings.SUPPORTED_KERNEL_VERSION
+    deleted = 0
+    for k in centos_kernels:
+        kv = k.split('kernel-')[1]
+        if (kv != running_kernel and
+            kv != default_kernel):
+            run_command([YUM, 'remove', '-y', k])
+            deleted += 1
+            logging.info('Deleted old Kernel: %s' % k)
+    for i in range(len(centos_kernels) + len(ml_kernels) - deleted - num_retain):
+        kv = ml_kernels[i].split('kernel-ml-')[1]
+        if (kv != running_kernel and
+            kv != default_kernel):
+            run_command([YUM, 'remove', '-y', ml_kernels[i]])
+            logging.info('Deleted old Kernel: %s' % ml_kernels[i])
 
 
 def init_update_issue():
-    default_if = None
+    from smart_manager.models import Service
+    from storageadmin.models import NetworkConnection
     ipaddr = None
-    o, e, c = run_command(['/usr/sbin/route'])
-    for i in o:
-        if (re.match('default', i) is not None):
-            default_if = i.split()[-1]
-    if (default_if is not None):
-        o2, e, c = run_command(['/usr/sbin/ifconfig', default_if])
-        for i2 in o2:
-            if (re.match('inet ', i2.strip()) is not None):
-                ipaddr = i2.split()[1]
+    so = Service.objects.get(name='rockstor')
+    if (so.config is not None):
+        config = json.loads(so.config)
+        try:
+            ipaddr = NetworkConnection.objects.get(name=config['network_interface']).ipaddr
+        except NetworkConnection.DoesNotExist:
+            pass
+    if (ipaddr is None):
+        default_if = None
+        some_if = None
+
+        o, e, c = run_command(['/usr/sbin/route'])
+        for i in o:
+            if (len(i.strip()) == 0):
+                continue
+            if (re.match('default', i) is not None):
+                default_if = i.split()[-1]
+            else:
+                some_if = i.split()[-1]
+        if (default_if is None):
+            default_if = some_if
+        if (default_if is not None):
+            o2, e, c = run_command(['/usr/sbin/ifconfig', default_if])
+            for i2 in o2:
+                if (re.match('inet ', i2.strip()) is not None):
+                    ipaddr = i2.split()[1]
+
     with open('/etc/issue', 'w') as ifo:
         if (ipaddr is None):
             ifo.write('The system does not yet have an ip address.\n')
             ifo.write('Rockstor cannot be configured using the web interface '
                         'without this.\n\n')
             ifo.write('Press Enter to receive updated network status\n')
-            ifo.write('If this message persists login as root and configure '
-                      'your network manually to proceed further.\n')
+            ifo.write('If this message persists please login as root and configure '
+                      'your network using nmtui, then reboot.\n')
         else:
             ifo.write('\nRockstor is successfully installed.\n\n')
             ifo.write('You can access the web-ui by pointing your browser to '
                       'https://%s\n\n' % ipaddr)
     return ipaddr
 
+
 def update_nginx(logger):
-    from storageadmin.models import NetworkInterface
     try:
-        ni = NetworkInterface.objects.get(itype='management')
-    except NetworkInterface.DoesNotExist:
-        return logger.debug('management interface not configured. Not updating Nginx conf')
-    conf = '%s/etc/nginx/nginx.conf' % settings.ROOT_DIR
-    fo, npath = mkstemp()
-    with open(conf) as ifo, open(npath, 'w') as tfo:
-        for line in ifo.readlines():
-            if (re.search('listen.*80 default_server', line) is not None):
-                substr = 'listen %s:80' % ni.ipaddr
-                line = re.sub(r'listen.*80', substr, line)
-            elif (re.search('listen.*443 default_server', line) is not None):
-                substr = 'listen %s:443' % ni.ipaddr
-                line = re.sub(r'listen.*443', substr, line)
-            tfo.write(line)
-    shutil.move(npath, conf)
-    run_command([SUPERCTL, 'restart', 'nginx'])
+        #importing here because, APIWrapper needs postgres to be setup, so
+        #importing at the top results in failure the first time.
+        from smart_manager.models import Service
+        from storageadmin.models import NetworkConnection
+        ip = None
+        port = 443
+        so = Service.objects.get(name='rockstor')
+        if (so.config is not None):
+            config = json.loads(so.config)
+            port = config['listener_port']
+            try:
+                ip = NetworkConnection.objects.get(name=config['network_interface']).ipaddr
+            except NetworkConnection.DoesNotExist:
+                logger.error('Network interface(%s) configured for rockstor '
+                             'service does not exist' % config['network_interface'])
+                return
+        services.update_nginx(ip, port)
+    except Exception, e:
+        logger.error('Exception occured while trying to update nginx')
+        logger.exception(e)
+
 
 def set_def_kernel(logger, version=settings.SUPPORTED_KERNEL_VERSION):
     supported_kernel_path = ('/boot/vmlinuz-%s' % version)
@@ -189,6 +249,7 @@ def enable_bootstrap_service(logging):
         logging.info('updating rockstor-bootstrap systemd service')
         shutil.copy(bs_src, bs_dest)
         run_command([SYSCTL, 'enable', name])
+        run_command([SYSCTL, 'daemon-reload'])
         return logging.info('Done.')
     return logging.info('%s looks correct. Not updating.' % name)
 
@@ -226,33 +287,29 @@ def cleanup_rclocal(logging):
         return os.chmod(rc_dest, 0755)
     logging.info('%s looks correct. Not updating.' % rc_dest)
 
+def downgrade_python(logging):
+    #With the release of CentOS 7.2, the new python package(2.7.5-34)
+    #backported some questionable changes that break gevent. So we downgrade to
+    #previous version: 2.7.5-18. I've moved these packages to rockrepo for
+    #now. Once the frankenversion resolves itself, we'll remove this workaround.
+    o, e, rc = run_command([YUM, 'info', 'python'])
+    for l in o:
+        if (re.match('Release.*34.el7$', l) is not None):
+            logging.info('Downgrading python and python-libs')
+            return downgrade_pkgs('python-2.7.5-18.el7_1.1', 'python-libs-2.7.5-18.el7_1.1')
+
 def main():
     loglevel = logging.INFO
     if (len(sys.argv) > 1 and sys.argv[1] == '-x'):
         loglevel = logging.DEBUG
     logging.basicConfig(format='%(asctime)s: %(message)s', level=loglevel)
     set_def_kernel(logging)
-    shutil.copyfile('/etc/issue', '/etc/issue.rockstor')
-    for i in range(30):
-        try:
-            if (init_update_issue() is not None):
-                # init_update_issue() didn't cause an exception and did return
-                # an ip so we break out of the multi try loop as we are done.
-                break
-            else:
-                # execute except block with message so we can try again.
-                raise Exception('default interface IP not yet configured')
-        except Exception, e:
-            # only executed if there is an actual exception with
-            # init_update_issue() or if it returns None so we can try again
-            # regardless as in both instances we may succeed on another try.
-            logging.debug('Exception occurred while running update_issue: %s. '
-                         'Trying again after 2 seconds.' % e.__str__())
-            if (i > 28):
-                logging.error('Waited too long and tried too many times. '
-                              'Quiting.')
-                raise e
-            time.sleep(2)
+    try:
+        delete_old_kernels(logging)
+    except Exception, e:
+        logging.debug('Exception while deleting old kernels. Soft error. Moving on.')
+        logging.exception(e)
+
     cert_loc = '%s/certs/' % BASE_DIR
     if (os.path.isdir(cert_loc)):
         if (not os.path.isfile('%s/rockstor.cert' % cert_loc) or
@@ -289,6 +346,7 @@ def main():
         tz_updated = update_tz(logging)
     except Exception, e:
         logging.error('Exception while updating timezone: %s' % e.__str__())
+        logging.exception(e)
 
     try:
         logging.info('Updating sshd_config')
@@ -360,10 +418,40 @@ def main():
         run_command([PREP_DB, ])
 
 
-    logging.info('Shutting down firewall...')
+    logging.info('stopping firewalld...')
     run_command([SYSCTL, 'stop', 'firewalld'])
     run_command([SYSCTL, 'disable', 'firewalld'])
+    logging.info('firewalld stopped and disabled')
     update_nginx(logging)
+    try:
+        #downgrading python is a stopgap until it's fixed in upstream.
+        downgrade_python(logging)
+    except Exception, e:
+        logging.error('Exception while downgrading python: %s' % e.__str__())
+        logging.exception(e)
+
+    shutil.copyfile('/etc/issue', '/etc/issue.rockstor')
+    for i in range(30):
+        try:
+            if (init_update_issue() is not None):
+                # init_update_issue() didn't cause an exception and did return
+                # an ip so we break out of the multi try loop as we are done.
+                break
+            else:
+                # execute except block with message so we can try again.
+                raise Exception('default interface IP not yet configured')
+        except Exception, e:
+            # only executed if there is an actual exception with
+            # init_update_issue() or if it returns None so we can try again
+            # regardless as in both instances we may succeed on another try.
+            logging.debug('Exception occurred while running update_issue: %s. '
+                         'Trying again after 2 seconds.' % e.__str__())
+            if (i > 28):
+                logging.error('Waited too long and tried too many times. '
+                              'Quiting.')
+                raise e
+            time.sleep(2)
+
     enable_rockstor_service(logging)
     enable_bootstrap_service(logging)
 

@@ -26,51 +26,78 @@
  */
 
 ReplicaReceiveTrailsView = RockstorLayoutView.extend({
-  events: {
-  },
+	events: {
+	},
 
-  initialize: function() {
-    // call initialize of base
-    this.constructor.__super__.initialize.apply(this, arguments);
-    // set template
-    this.template = window.JST.replication_receive_trails;
-    this.paginationTemplate = window.JST.common_pagination;
-    // add dependencies
-    this.replicaShareId = this.options.replicaShareId;
-    this.replicaShare = new ReplicaShare({id: this.replicaShareId});
-    this.dependencies.push(this.replicaShare);
-    this.collection = new ReceiveTrailCollection(null, {
-      replicaShareId: this.replicaShareId
-    });
-    this.dependencies.push(this.collection);
-    this.collection.on("reset", this.renderReplicaReceiveTrails, this);
-  },
+	initialize: function() {
+		// call initialize of base
+		this.constructor.__super__.initialize.apply(this, arguments);
+		// set template
+		this.template = window.JST.replication_receive_trails;
+		// add dependencies
+		this.replicaShareId = this.options.replicaShareId;
+		this.replicaShare = new ReplicaShare({id: this.replicaShareId});
+		this.dependencies.push(this.replicaShare);
+		this.collection = new ReceiveTrailCollection(null, {
+			replicaShareId: this.replicaShareId
+		});
+		this.dependencies.push(this.collection);
+		this.collection.on("reset", this.renderReplicaReceiveTrails, this);
+		this.initHandlebarHelpers();
+	},
 
-  render: function() {
-    this.fetch(this.renderReplicaReceiveTrails, this);
-    return this;
-  },
-  
-  renderReplicaReceiveTrails: function() {
-    var _this = this;
-    $(this.el).html(this.template({
-      replicaShare: this.replicaShare,
-      receiveTrails: this.collection
-    }));
-    // remove existing tooltips
-    if (this.$('[rel=tooltip]')) { 
-      this.$('[rel=tooltip]').tooltip('hide');
-    }
-    this.$(".pagination-ph").html(this.paginationTemplate({
-      collection: this.collection
-    }));
-    this.$('#receive-trails-table').tablesorter();
-    this.$('[rel=tooltip]').tooltip({ placement: 'bottom'});
-  },
+	render: function() {
+		this.fetch(this.renderReplicaReceiveTrails, this);
+		return this;
+	},
+
+	renderReplicaReceiveTrails: function() {
+		var _this = this;
+		$(this.el).html(this.template({
+			replicaShare: this.replicaShare.toJSON(),
+			replicaReceiveColl: this.collection.toJSON(),
+			collection: this.collection,
+			collectionNotEmpty: !this.collection.isEmpty(),
+		}));
+		// remove existing tooltips
+		if (this.$('[rel=tooltip]')) { 
+			this.$('[rel=tooltip]').tooltip('hide');
+		}
+		this.$('#receive-trails-table').tablesorter();
+		this.$('[rel=tooltip]').tooltip({ placement: 'bottom'});
+	},
+
+	initHandlebarHelpers: function(){
+		
+		Handlebars.registerHelper('getDateFormat', function(date){
+			return moment(date).format(RS_DATE_FORMAT);
+		});
+
+		Handlebars.registerHelper('ifStatusSuccess', function(status, opts){
+			if (status != 'failed'){
+				return opts.fn(this);
+			}
+			return opts.inverse(this);
+		});
+
+		Handlebars.registerHelper('getDuration', function(endTime, startTime){
+			return moment(endTime).from(moment(startTime));
+		});
+
+		Handlebars.registerHelper('getRate', function(endTime, startTime, kbReceived){
+			var d;
+			if (kbReceived){
+				d = moment(endTime).diff(moment(startTime))/1000;
+			} else {
+				d = moment().diff(moment(startTime))/1000;
+			}
+			return (kbReceived / d).toFixed(2);
+		});
+	}
 
 });
 
-// Add pagination
+//Add pagination
 Cocktail.mixin(ReplicaReceiveTrailsView, PaginationMixin);
 
 

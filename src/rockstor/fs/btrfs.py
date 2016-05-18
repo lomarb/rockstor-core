@@ -28,10 +28,11 @@ import signal
 import shutil
 import collections
 from system.osi import (run_command, create_tmp_dir, is_share_mounted,
-                        is_mounted, get_virtio_disk_serial, get_disk_serial)
+                        is_mounted, get_disk_serial, get_md_members)
 from system.exceptions import (CommandException, NonBTRFSRootException)
 from pool_scrub import PoolScrub
 from django_ztask.decorators import task
+import uuid
 
 import logging
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ def get_pool_info(disk):
 
 def pool_raid(mnt_pt):
     o, e, rc = run_command([BTRFS, 'fi', 'df', mnt_pt])
-    #data, system, metadata, globalreserve
+    # data, system, metadata, globalreserve
     raid_d = {}
     for l in o:
         fields = l.split()
@@ -120,17 +121,14 @@ def resize_pool(pool, dev_list, add=True):
     return run_command(resize_cmd)
 
 
+#Try mounting by-label first. If that is not possible, mount using every device
+#in the set, one by one until success.
 def mount_root(pool):
-    device = pool.disk_set.first().name
     root_pool_mnt = DEFAULT_MNT_DIR + pool.name
     if (is_share_mounted(pool.name)):
         return root_pool_mnt
     create_tmp_dir(root_pool_mnt)
     mnt_device = '/dev/disk/by-label/%s' % pool.name
-    if (not os.path.exists(mnt_device)):
-        mnt_device = device
-        if (re.match('/dev/', device) is None):
-            mnt_device = ('/dev/%s' % mnt_device)
     mnt_cmd = [MOUNT, mnt_device, root_pool_mnt, ]
     mnt_options = ''
     if (pool.mnt_options is not None):
@@ -138,23 +136,55 @@ def mount_root(pool):
     if (pool.compression is not None):
         if (re.search('compress', mnt_options) is None):
             mnt_options = ('%s,compress=%s' % (mnt_options, pool.compression))
-    if (len(mnt_options) > 0):
-        mnt_cmd.extend(['-o', mnt_options])
-    run_command(mnt_cmd)
-    return root_pool_mnt
+    if (os.path.exists(mnt_device)):
+        if (len(mnt_options) > 0):
+            mnt_cmd.extend(['-o', mnt_options])
+        run_command(mnt_cmd)
+        return root_pool_mnt
+
+    #If we cannot mount by-label, let's try mounting by device one by one
+    #until we get our first success.
+    if (pool.disk_set.count() < 1):
+        raise Exception('Cannot mount Pool(%s) as it has no disks in it.' % pool.name)
+    last_device = pool.disk_set.last()
+    for device in pool.disk_set.all():
+        mnt_device = ('/dev/%s' % device.name)
+        if (os.path.exists(mnt_device)):
+            mnt_cmd = [MOUNT, mnt_device, root_pool_mnt, ]
+            if (len(mnt_options) > 0):
+                mnt_cmd.extend(['-o', mnt_options])
+            try:
+                run_command(mnt_cmd)
+                return root_pool_mnt
+            except Exception, e:
+                if (device.name == last_device.name):
+                    #exhausted mounting using all devices in the pool
+                    raise e
+                logger.error('Error mouting: %s. Will try using another device.' % mnt_cmd)
+                logger.exception(e)
+    raise Exception('Failed to mount Pool(%s) due to an unknown reason.' % pool.name)
 
 
 def umount_root(root_pool_mnt):
-    if (is_mounted(root_pool_mnt)):
-        run_command([UMOUNT, '-l', root_pool_mnt])
-        for i in range(10):
-            if (not is_mounted(root_pool_mnt)):
-                return run_command([RMDIR, root_pool_mnt])
-            time.sleep(1)
-        run_command([UMOUNT, '-f', root_pool_mnt])
-    if (os.path.exists(root_pool_mnt)):
-        return run_command([RMDIR, root_pool_mnt])
-    return True
+    if (not os.path.exists(root_pool_mnt)):
+        return
+    try:
+        o, e, rc = run_command([UMOUNT, '-l', root_pool_mnt])
+    except CommandException, ce:
+        if (ce.rc == 32):
+            for l in ce.err:
+                l = l.strip()
+                if (re.search('not mounted$', l) is not None):
+                    return
+            raise ce
+    for i in range(20):
+        if (not is_mounted(root_pool_mnt)):
+            run_command([RMDIR, root_pool_mnt])
+            return
+        time.sleep(2)
+    run_command([UMOUNT, '-f', root_pool_mnt])
+    run_command([RMDIR, root_pool_mnt])
+    return
 
 
 def remount(mnt_pt, mnt_options):
@@ -253,9 +283,19 @@ def snapshot_list(mnt_pt):
     return snaps
 
 
-def shares_info(mnt_pt):
-    #return a lit of share names unter this mount_point.
-    #useful to gather names of all shares in a pool
+def shares_info(pool):
+    # return a list of share names under this mount_point.
+    # useful to gather names of all shares in a pool
+    try:
+        mnt_pt = mount_root(pool)
+    except CommandException, e:
+        if (e.rc == 32):
+            #mount failed, so we just assume that something has gone wrong at a
+            #lower level, like a device failure. Return empty share map.
+            #application state can be removed. If the low level failure is
+            #recovered, state gets reconstructed anyway.
+            return {}
+        raise
     o, e, rc = run_command([BTRFS, 'subvolume', 'list', '-s', mnt_pt])
     snap_idmap = {}
     for l in o:
@@ -272,9 +312,9 @@ def shares_info(mnt_pt):
         fields = l.split()
         vol_id = fields[1]
         if (vol_id in snap_idmap):
-            #snapshot
-            #if the snapshot directory is direct child of a pool and is rw,
-            #then it's a Share. (aka Rockstor Share clone).
+            # snapshot
+            # if the snapshot directory is direct child of a pool and is rw,
+            # then it's a Share. (aka Rockstor Share clone).
             clone = False
             if (len(snap_idmap[vol_id].split('/')) == 1):
                 o, e, rc = run_command([BTRFS, 'property', 'get',
@@ -287,10 +327,11 @@ def shares_info(mnt_pt):
 
         parent_id = fields[5]
         if (parent_id in share_ids):
-            #subvol of subvol. add it so child subvols can also be ignored.
+            # subvol of subvol. add it so child subvols can also be ignored.
             share_ids.append(vol_id)
         elif (parent_id in snap_idmap):
-            #snapshot/subvol of snapshot. add it so child subvols can also be ignored.
+            # snapshot/subvol of snapshot.
+            # add it so child subvols can also be ignored.
             snap_idmap[vol_id] = fields[-1]
         else:
             shares_d[fields[-1]] = '0/%s' % vol_id
@@ -308,7 +349,8 @@ def parse_snap_details(mnt_pt, fields):
                 writable = False
             if (writable is True):
                 if (len(fields[-1].split('/')) == 1):
-                    #writable snapshot + direct child of pool. so we'll treat it as a share.
+                    # writable snapshot + direct child of pool.
+                    # So we'll treat it as a share.
                     continue
             snap_name = fields[-1].split('/')[-1]
     return snap_name, writable
@@ -322,30 +364,27 @@ def snaps_info(mnt_pt, share_name):
             if (fields[-1] == share_name):
                 share_id = fields[1]
                 share_uuid = fields[12]
-
-    if (share_id is None):
-        raise Exception('Failed to get uuid of the share(%s) under mount(%s)'
-                        % (share_name, mnt_pt))
+    if (share_id is None): return {}
 
     o, e, rc = run_command([BTRFS, 'subvolume', 'list', '-s', '-p', '-q',
                             '-u', mnt_pt])
-
     snaps_d = {}
     snap_uuids = []
     for l in o:
         if (re.match('ID ', l) is not None):
             fields = l.split()
-            #parent uuid must be share_uuid or another snapshot's uuid
+            # parent uuid must be share_uuid or another snapshot's uuid
             if (fields[7] != share_id and fields[15] != share_uuid and
                 fields[15] not in snap_uuids):
                 continue
             snap_name, writable = parse_snap_details(mnt_pt, fields)
-            snaps_d[snap_name] = ('0/%s' % fields[1], writable, )
-            #we rely on the observation that child snaps are listed after their
-            #parents, so no need to iterate through results separately. Instead,
-            #we add the uuid of a snap to the list and look up if it's a parent
-            #of subsequent entries.
-            snap_uuids.append(fields[17])
+            if (snap_name is not None):
+                snaps_d[snap_name] = ('0/%s' % fields[1], writable, )
+                # we rely on the observation that child snaps are listed after their
+                # parents, so no need to iterate through results separately.
+                # Instead, we add the uuid of a snap to the list and look up if
+                # it's a parent of subsequent entries.
+                snap_uuids.append(fields[17])
 
     return snaps_d
 
@@ -368,7 +407,7 @@ def share_id(pool, share_name):
     raise Exception('subvolume id for share: %s not found.' % share_name)
 
 
-def remove_share(pool, share_name, pqgroup):
+def remove_share(pool, share_name, pqgroup, force=False):
     """
     umount share if its mounted.
     mount root pool
@@ -382,6 +421,12 @@ def remove_share(pool, share_name, pqgroup):
     subvol_mnt_pt = root_pool_mnt + '/' + share_name
     if (not is_subvol(subvol_mnt_pt)):
         return
+    if (force):
+        o, e, rc = run_command([BTRFS, 'subvolume', 'list', '-o', subvol_mnt_pt])
+        for l in o:
+            if (re.match('ID ', l) is not None):
+                subvol = root_pool_mnt + '/' + l.split()[-1]
+                run_command([BTRFS, 'subvolume', 'delete', subvol], log=True)
     qgroup = ('0/%s' % share_id(pool, share_name))
     delete_cmd = [BTRFS, 'subvolume', 'delete', subvol_mnt_pt]
     run_command(delete_cmd, log=True)
@@ -500,7 +545,7 @@ def qgroup_max(mnt_pt):
     return res
 
 def qgroup_create(pool):
-    #mount pool
+    # mount pool
     mnt_pt = mount_root(pool)
     qid = ('%s/%d' % (QID, qgroup_max(mnt_pt) + 1))
     o, e, rc = run_command([BTRFS, 'qgroup', 'create', qid, mnt_pt], log=True)
@@ -517,8 +562,8 @@ def qgroup_destroy(qid, mnt_pt):
 
 
 def qgroup_is_assigned(qid, pqid, mnt_pt):
-    #returns true if the given qgroup qid is already assigned to pqid for the
-    #path(mnt_pt)
+    # Returns true if the given qgroup qid is already assigned to pqid for the
+    # path(mnt_pt)
     o, e, rc = run_command([BTRFS, 'qgroup', 'show', '-pc', mnt_pt])
     for l in o:
         fields = l.split()
@@ -532,30 +577,40 @@ def qgroup_assign(qid, pqid, mnt_pt):
     if (qgroup_is_assigned(qid, pqid, mnt_pt)):
         return True
 
-    # in btrfs-progs 4.2, qgroup assign succeeds but throws a warning:
+    # since btrfs-progs 4.2, qgroup assign succeeds but throws a warning:
     # "WARNING: # quotas may be inconsistent, rescan needed" and returns with
     # exit code 1.
     try:
-        run_command([BTRFS, 'qgroup', 'assign', qid, pqid, mnt_pt],
-                    log=True)
+        run_command([BTRFS, 'qgroup', 'assign', qid, pqid, mnt_pt])
     except CommandException, e:
         wmsg = 'WARNING: quotas may be inconsistent, rescan needed'
-        if (e.rc == 1 and e.out[0] == wmsg):
-            if (qgroup_is_assigned(qid, pqid, mnt_pt)):
-                return True
+        if (e.rc == 1 and e.err[0] == wmsg):
+            #schedule a rescan if one is not currently running.
+            dmsg = ('Quota inconsistency while assigning %s. Rescan scheduled.'
+                    % qid)
+            try:
+                run_command([BTRFS, 'quota', 'rescan', mnt_pt])
+                return logger.debug(dmsg)
+            except CommandException, e2:
+                emsg = 'ERROR: quota rescan failed: Operation now in progress'
+                if (e2.rc == 1 and e2.err[0] == emsg):
+                    return logger.debug('%s.. Another rescan already in progress.' % dmsg)
+                logger.exception(e2)
+                raise e2
+        logger.exception(e)
         raise e
-
 
 def update_quota(pool, qgroup, size_bytes):
     root_pool_mnt = mount_root(pool)
-    #until btrfs adds better support for qgroup limits. We'll not set limits.
-    #It looks like we'll see the fixes in 4.2 and final ones by 4.3.
-    #cmd = [BTRFS, 'qgroup', 'limit', str(size_bytes), qgroup, root_pool_mnt]
+    # Until btrfs adds better support for qgroup limits. We'll not set limits.
+    # It looks like we'll see the fixes in 4.2 and final ones by 4.3.
+    # cmd = [BTRFS, 'qgroup', 'limit', str(size_bytes), qgroup, root_pool_mnt]
     cmd = [BTRFS, 'qgroup', 'limit', 'none', qgroup, root_pool_mnt]
     return run_command(cmd, log=True)
 
 
 def convert_to_KiB(size):
+    # todo candidate for move to system/osi as not btrfs related
     SMAP = {
         'KiB': 1,
         'MiB': 1024,
@@ -578,16 +633,13 @@ def share_usage(pool, share_id):
     root_pool_mnt = mount_root(pool)
     cmd = [BTRFS, 'qgroup', 'show', root_pool_mnt]
     out, err, rc = run_command(cmd, log=True)
-    rusage = eusage = None
+    rusage = eusage = -1
     for line in out:
         fields = line.split()
-        if (fields[0] == share_id):
+        if (len(fields) > 0 and fields[0] == share_id):
             rusage = convert_to_KiB(fields[-2])
             eusage = convert_to_KiB(fields[-2])
             break
-    if (rusage is None or eusage is None):
-        raise Exception('usage cannot be determined for share_id: %s' %
-                        share_id)
     return (rusage, eusage)
 
 
@@ -614,8 +666,8 @@ def shares_usage(pool, share_map, snap_map):
 
 
 def pool_usage(mnt_pt):
-    #  @todo: remove temporary raid5/6 custom logic once fi usage
-    #  supports raid5/6.
+    # @todo: remove temporary raid5/6 custom logic once fi usage
+    # supports raid5/6.
     cmd = [BTRFS, 'fi', 'usage', '-b', mnt_pt]
     total = 0
     inuse = 0
@@ -652,10 +704,10 @@ def pool_usage(mnt_pt):
         if (num_disks > 0):
             per_disk = total / num_disks
             total = (num_disks - parity) * per_disk
-        free = total - inuse
     else:
         total = total / data_ratio
         inuse = inuse / data_ratio
+    free = total - inuse
     return (total, inuse, free)
 
 
@@ -748,15 +800,38 @@ def btrfs_importable(disk):
 
 def root_disk():
     """
-    returns the partition(s) used for /. Typically it's sda.
+    Returns the base drive device name where / mount point is found.
+    Works by parsing /proc/mounts. Eg if the root entry was as follows:
+    /dev/sdc3 / btrfs rw,noatime,ssd,space_cache,subvolid=258,subvol=/root 0 0
+    the returned value is sdc
+    The assumption with non md devices is that the partition number will be a
+    single character.
     """
+    # todo candidate for move to system/osi as not btrfs related
     with open('/proc/mounts') as fo:
         for line in fo.readlines():
             fields = line.split()
-            if (fields[1] == '/' and
-                    (fields[2] == 'ext4' or fields[2] == 'btrfs')):
+            if (fields[1] == '/' and fields[2] == 'btrfs'):
                 disk = os.path.realpath(fields[0])
-                return disk[5:-1]
+                if (re.match('/dev/md', disk) is not None):
+                    # We have an Multi Device naming scheme which is a little
+                    # different ie 3rd partition = md126p3 on the md126 device,
+                    # or md0p3 as third partition on md0 device.
+                    # As md devs often have 1 to 3 numerical chars we search
+                    # for one or more numeric characters, this assumes our dev
+                    # name has no prior numerical components ie starts /dev/md
+                    # but then we are here due to that match.
+                    # Find the indexes of the device name without the partition.
+                    # Search for where the numbers after "md" end.
+                    # N.B. the following will also work if root is not in a
+                    # partition ie on md126 directly.
+                    end = re.search('\d+', disk).end()
+                    return disk[5:end]
+                else:
+                    # catch all that assumes we have eg /dev/sda3 and want "sda"
+                    # so start from 6th char and remove the last char
+                    # /dev/sda3 = sda
+                    return disk[5:-1]
     msg = ('root filesystem is not BTRFS. During Rockstor installation, '
            'you must select BTRFS instead of LVM and other options for '
            'root filesystem. Please re-install Rockstor properly.')
@@ -764,27 +839,50 @@ def root_disk():
 
 
 def scan_disks(min_size):
-    root = root_disk()
+    """
+    Using lsblk we scan all attached disks and categorize them according to
+    if they are partitioned, their file system, if the drive hosts our / mount
+    point etc. The result of this scan is used by:-
+    view/disk.py _update_disk_state
+    for further analysis / categorization.
+    N.B. if a device (partition or whole dev) hosts swap or is of no interest
+    then it is ignored.
+    :param min_size: Discount all devices below this size in KB
+    :return: List containing drives of interest
+    """
+    # todo candidate for move to system/osi as not btrfs related
+    base_root_disk = root_disk()
     cmd = ['/usr/bin/lsblk', '-P', '-o',
            'NAME,MODEL,SERIAL,SIZE,TRAN,VENDOR,HCTL,TYPE,FSTYPE,LABEL,UUID']
     o, e, rc = run_command(cmd)
-    dnames = {}
-    disks = []
-    serials = []
-    root_serial = None
-    # to use udevadm for serial # rather than lsblk make this True
+    dnames = {}  # Working dictionary of devices.
+    disks = []  # List derived from the final working dictionary of devices.
+    serials_seen = []  # List tally of serials seen during this scan.
+    # Stash variables to pass base info on root_disk to root device proper.
+    root_serial = root_model = root_transport = root_vendor = root_hctl = None
+    # To use udevadm to retrieve serial number rather than lsblk, make this True
+    # N.B. when lsblk returns no serial for a device then udev is used anyway.
     always_use_udev_serial = False
-    for l in o:
-        if (re.match('NAME', l) is None):
+    device_names_seen = []  # List tally of devices seen during this scan
+    for line in o:
+        # skip processing of all lines that don't begin with "NAME"
+        if (re.match('NAME', line) is None):
             continue
-        dmap = {}
+        # setup our line / dev name dependant variables
+        # easy read categorization flags, all False until found otherwise.
+        is_root_disk = False  # the base dev that / is mounted on ie system disk
+        is_partition = is_btrfs = False
+        dmap = {}  # dictionary to hold line info from lsblk output eg NAME: sda
+        # line parser variables
         cur_name = ''
         cur_val = ''
         name_iter = True
         val_iter = False
-        sl = l.strip()
+        sl = line.strip()
         i = 0
         while i < len(sl):
+            # We iterate over the line to parse it's information char by char
+            # keeping track of name or value and adding the char accordingly
             if (name_iter and sl[i] == '=' and sl[i + 1] == '"'):
                 name_iter = False
                 val_iter = True
@@ -805,26 +903,149 @@ def scan_disks(min_size):
                 i = i + 1
             else:
                 raise Exception('Failed to parse lsblk output: %s' % sl)
+        # md devices, such as mdadmin software raid and some hardware raid block
+        # devices show up in lsblk's output multiple times with identical info.
+        # Given we only need one copy of this info we remove duplicate device
+        # name entries, also offers more sane output to views/disk.py where name
+        # will be used as the index
+        if (dmap['NAME'] in device_names_seen):
+            continue
+        device_names_seen.append(dmap['NAME'])
+        # We are not interested in CD / DVD rom devices so skip to next device
         if (dmap['TYPE'] == 'rom'):
             continue
-        if (dmap['NAME'] == root):
+        # We are not interested in swap partitions or devices so skip further
+        # processing and move to next device.
+        # N.B. this also facilitates a simpler mechanism of classification.
+        if (dmap['FSTYPE'] == 'swap'):
+            continue
+        # ----- Now we are done with easy exclusions we begin classification.
+        # ------------ Start more complex classification -------------
+        if (dmap['NAME'] == base_root_disk):  # as returned by root_disk()
+            # We are looking at the system drive that hosts, either
+            # directly or as a partition, the / mount point.
+            # Given lsblk doesn't return serial, model, transport, vendor, hctl
+            # when displaying partitions we grab and stash them while we are
+            # looking at the root drive directly, rather than the / partition.
+            # N.B. assumption is lsblk first displays devices then partitions,
+            # this is the observed behaviour so far.
             root_serial = dmap['SERIAL']
-        if (dmap['TYPE'] == 'part'):
+            root_model = dmap['MODEL']
+            root_transport = dmap['TRAN']
+            root_vendor = dmap['VENDOR']
+            root_hctl = dmap['HCTL']
+            # Set readability flag as base_dev identified.
+            is_root_disk = True  # root as returned by root_disk()
+            # And until we find a partition on this root disk we will label it
+            # as our root, this then allows for non partitioned root devices
+            # such as mdraid installs where root is directly on eg /dev/md126.
+            # N.B. this assumes base devs are listed before their partitions.
+            dmap['root'] = True
+        # Normal partitions are of type 'part', md partitions are of type 'md'
+        # normal disks are of type 'disk' md devices are of type eg 'raid1'.
+        # Disk members of eg intel bios raid md devices fstype='isw_raid_member'
+        # Note for future re-write; when using udevadm DEVTYPE, partition and
+        # disk works for both raid and non raid partitions and devices.
+        # Begin readability variables assignment
+        # - is this a partition regular or md type.
+        if (dmap['TYPE'] == 'part' or dmap['TYPE'] == 'md'):
+            is_partition = True
+        # - is filesystem of type btrfs
+        if (dmap['FSTYPE'] == 'btrfs'):
+            is_btrfs = True
+        # End readability variables assignment
+        if is_partition:
+            # Search our working dictionary of already scanned devices by name
+            # We are assuming base devices are listed first and if of interest
+            # we have recorded it and can now back port it's partitioned status.
             for dname in dnames.keys():
                 if (re.match(dname, dmap['NAME']) is not None):
+                    # Our device name has a base device entry of interest saved:
+                    # ie we have scanned and saved sdb but looking at sdb3 now.
+                    # Given we have found a partition on an existing base dev
+                    # we should update that base dev's entry in dnames to
+                    # parted "True" as when recorded lsblk type on base device
+                    # would have been disk or RAID1 or raid1 (for base md dev).
+                    # Change the 12th entry (0 indexed) of this device to True
+                    # The 12 entry is the parted flag so we label
+                    # our existing base dev entry as parted ie partitioned.
                     dnames[dname][11] = True
-        if (((dmap['NAME'] != root and dmap['TYPE'] != 'part') or
-                (dmap['TYPE'] == 'part' and dmap['FSTYPE'] == 'btrfs'))):
-            dmap['parted'] = False  # part = False by default
-            dmap['root'] = False
-            if (dmap['TYPE'] == 'part' and dmap['FSTYPE'] == 'btrfs'):
-                #  btrfs partition for root(rockstor_rockstor) pool
-                if (re.match(root, dmap['NAME']) is not None):
+                    # Also take this opportunity to back port software raid info
+                    # from partitions to the base device if the base device
+                    # doesn't already have an fstype identifying it's raid
+                    # member status. For Example:-
+                    # bios raid base dev gives lsblk FSTYPE="isw_raid_member";
+                    # we already catch this directly.
+                    # Pure software mdraid base dev has lsblk FSTYPE="" but a
+                    # partition on this pure software mdraid that is a member
+                    # of eg md125 has FSTYPE="linux_raid_member"
+                    if dmap['FSTYPE'] == 'linux_raid_member' \
+                            and (dnames[dname][8] is None):
+                        # N.B. 9th item (index 8) in dname = FSTYPE
+                        # We are a partition that is an mdraid raid member so
+                        # backport this info to our base device ie sda1 raid
+                        # member so label sda's FSTYPE entry the same as it's
+                        # partition's entry if the above condition is met, ie
+                        # only if the base device doesn't already have an
+                        # FSTYPE entry ie None, this way we don't overwrite
+                        # / loose info and we only need to have one partition
+                        # identified as an mdraid member to classify the entire
+                        # device (the base device) as a raid member, at least in
+                        # part.
+                        dnames[dname][8] = dmap['FSTYPE']
+        if ((not is_root_disk and not is_partition) or
+                (is_btrfs)):
+            # We have a non system disk that is not a partition
+            # or
+            # We have a device that is btrfs formatted
+            # In the case of a btrfs partition we override the parted flag.
+            # Or we may just be a non system disk without partitions.
+            dmap['parted'] = False  # could be corrected later
+            dmap['root'] = False  # until we establish otherwise as we might be.
+            if is_btrfs:
+                # a btrfs file system
+                if (re.match(base_root_disk, dmap['NAME']) is not None):
+                    # We are assuming that a partition with a btrfs fs on is our
+                    # root if it's name begins with our base system disk name.
+                    # Now add the properties we stashed when looking at the base
+                    # root disk rather than the root partition we see here.
                     dmap['SERIAL'] = root_serial
+                    dmap['MODEL'] = root_model
+                    dmap['TRAN'] = root_transport
+                    dmap['VENDOR'] = root_vendor
+                    dmap['HCTL'] = root_hctl
+                    # As we have found root to be on a partition we can now
+                    # un flag the base device as having been root prior to
+                    # finding this partition on that base_root_disk
+                    # N.B. Assumes base dev is listed before it's partitions
+                    # The 13th item in dnames entries is root so index = 12.
+                    # Only update our base_root_disk if it exists in our scanned
+                    # disks as this may be the first time we are seeing it.
+                    # Search to see if we already have an entry for the
+                    # the base_root_disk which may be us or our base dev if we
+                    # are a partition
+                    for dname in dnames.keys():
+                        if dname == base_root_disk:
+                            dnames[base_root_disk][12] = False
+                    # And update this device as real root
+                    # Note we may be looking at the base_root_disk or one of
+                    # it's partitions there after.
                     dmap['root'] = True
+                    # If we are an md device then use get_md_members string
+                    # to populate our MODEL since it is otherwise unused.
+                    if (re.match('md', dmap['NAME']) is not None):
+                        # cheap way to display our member drives
+                        dmap['MODEL'] = get_md_members(dmap['NAME'])
                 else:
-                    #  ignore btrfs partitions that are not for rootfs.
-                    continue
+                    # We have a non system disk btrfs filesystem.
+                    # Ie we are a whole disk or a partition with btrfs on but
+                    # NOT on the system disk.
+                    # Most likely a current btrfs data drive or one we could
+                    # import.
+                    # As we don't understand / support btrfs in partitions
+                    # then ignore / skip this btrfs device if it's a partition
+                    if is_partition:
+                        continue
             # convert size into KB
             size_str = dmap['SIZE']
             if (size_str[-1] == 'G'):
@@ -832,23 +1053,38 @@ def scan_disks(min_size):
             elif (size_str[-1] == 'T'):
                 dmap['SIZE'] = int(float(size_str[:-1]) * 1024 * 1024 * 1024)
             else:
+                # Move to next line if we don't understand the size as GB or TB
+                # Note that this may cause an entry to be ignored if formatting
+                # changes.
+                # Previous to the explicit ignore swap clause this often caught
+                # swap but if swap was in GB and above min_size then it could
+                # show up when not in a partition (the previous caveat clause).
                 continue
             if (dmap['SIZE'] < min_size):
                 continue
+            # No more continues so the device we have is to be passed to our db
+            # entry system views/disk.py ie _update_disk_state()
+            # Do final tidy of data in dmap and ready for entry in dnames dict.
+            # db needs unique serial so provide one where there is none found.
+            # First try harder with udev if lsblk failed on serial retrieval.
             if (dmap['SERIAL'] == '' or always_use_udev_serial):
                 # lsblk fails to retrieve SERIAL from VirtIO drives and some
-                # sdcard devices so try specialized function.
-                # dmap['SERIAL'] = get_virtio_disk_serial(dmap['NAME'])
-                dmap['SERIAL'] = get_disk_serial(dmap['NAME'], None)
-            if (dmap['SERIAL'] == '' or (dmap['SERIAL'] in serials)):
+                # sdcard devices and md devices so try specialized function.
+                dmap['SERIAL'] = get_disk_serial(dmap['NAME'])
+            if (dmap['SERIAL'] == '' or (dmap['SERIAL'] in serials_seen)):
                 # No serial number still or its a repeat.
-                # Overwrite drive serial entry with drive name:
-                # see disks_table.jst for a use of this flag mechanism.
-                dmap['SERIAL'] = dmap['NAME']
-            serials.append(dmap['SERIAL'])
-            for k in dmap.keys():
-                if (dmap[k] == ''):
-                    dmap[k] = None
+                # Overwrite drive serial entry in dmap with fake-serial- + uuid4
+                # See disk/disks_table.jst for a use of this flag mechanism.
+                # Previously we did dmap['SERIAL'] = dmap['NAME'] which is less
+                # robust as it can itself produce duplicate serial numbers.
+                dmap['SERIAL'] = 'fake-serial-' + str(uuid.uuid4())
+                # 12 chars (fake-serial-) + 36 chars (uuid4) = 48 chars
+            serials_seen.append(dmap['SERIAL'])
+            # replace all dmap values of '' with None.
+            for key in dmap.keys():
+                if (dmap[key] == ''):
+                    dmap[key] = None
+            # transfer our device info as now parsed in dmap to the dnames dict
             dnames[dmap['NAME']] = [dmap['NAME'], dmap['MODEL'],
                                     dmap['SERIAL'], dmap['SIZE'],
                                     dmap['TRAN'], dmap['VENDOR'],
@@ -856,17 +1092,20 @@ def scan_disks(min_size):
                                     dmap['FSTYPE'], dmap['LABEL'],
                                     dmap['UUID'], dmap['parted'],
                                     dmap['root'], ]
+    # Transfer our collected disk / dev entries of interest to the disks list.
     for d in dnames.keys():
         disks.append(Disk(*dnames[d]))
     return disks
 
 
 def wipe_disk(disk):
+    # todo candidate for move to system/osi as not btrfs related
     disk = ('/dev/%s' % disk)
     return run_command([WIPEFS, '-a', disk])
 
 
 def blink_disk(disk, total_exec, read, sleep):
+    # todo candidate for move to system/osi as not btrfs related
     DD_CMD = [DD, 'if=/dev/%s' % disk, 'of=/dev/null', 'bs=512',
               'conv=noerror']
     p = subprocess.Popen(DD_CMD, shell=False, stdout=subprocess.PIPE,
@@ -889,7 +1128,8 @@ def set_property(mnt_pt, name, val, mount=True):
         return run_command(cmd)
 
 
-def get_oldest_snap(subvol_path, num_retain):
+def get_snap(subvol_path, oldest=False, num_retain=None, regex=None):
+    if (not os.path.isdir(subvol_path)): return None
     share_name = subvol_path.split('/')[-1]
     cmd = [BTRFS, 'subvol', 'list', '-o', subvol_path]
     o, e, rc = run_command(cmd)
@@ -900,9 +1140,24 @@ def get_oldest_snap(subvol_path, num_retain):
             snap_fields = fields[-1].split('/')
             if (len(snap_fields) != 3 or
                 snap_fields[1] != share_name):
+                #not the Share we are interested in.
+                continue
+            if (regex is not None and re.search(regex, snap_fields[2]) is None):
+                #regex not in the name
                 continue
             snaps[int(fields[1])] = snap_fields[2]
     snap_ids = sorted(snaps.keys())
-    if (len(snap_ids) > num_retain):
-        return snaps[snap_ids[0]]
+    if (oldest):
+        if(len(snap_ids) > num_retain):
+            return snaps[snap_ids[0]]
+    elif (len(snap_ids) > 0):
+        return snaps[snap_ids[-1]]
     return None
+
+
+def get_oldest_snap(subvol_path, num_retain, regex=None):
+    return get_snap(subvol_path, oldest=True, num_retain=num_retain, regex=regex)
+
+
+def get_lastest_snap(subvol_path, regex=None):
+    return get_snap(subvol_path, regex=regex)

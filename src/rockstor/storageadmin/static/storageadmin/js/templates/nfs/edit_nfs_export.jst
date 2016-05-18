@@ -22,11 +22,11 @@
 <div class="row">
 <div class="col-md-8">
 <div class="panel panel-default">
-<% if (nfsExportGroup.get('id')>0) { %>
+{{#if nfsExportNotEmpty}}
 <div class="panel panel-heading">Edit NFS export</div>
-<%} else {%>
+{{else}}
 <div class="panel panel-heading">Add NFS export</div>
-<%}%>
+{{/if}}
 <div class="panel-body">
       <form class="form-horizontal" id="edit-nfs-export-form" name="aform" >
         <div class="messages"></div>
@@ -36,19 +36,9 @@
           <label class="col-sm-4 control-label" for="shares">Shares to export<span class="required"> *</span></label>
           <div class="col-sm-4">
             <select class="form-control" name="shares" id="shares" size="10" data-placeholder="Select shares to export" multiple>
-              <%
-                var nShares = _.map(nfsExportGroup.get('exports'),
-                function(e) { return e.share; });
-
-              %>
-              <% shares.each(function(share, index) { %>
-
-                <% if (_.indexOf(nShares, share.get('name')) != -1) { %>
-                  <option value="<%= share.get('name') %>" selected="selected"><%= share.get('name') %></option>
-                <% } else { %>
-                  <option value="<%= share.get('name') %>" ><%= share.get('name') %></option>
-                <% } %>
-              <% }); %>
+              {{#each shares}} 
+                   <option value="{{this.name}}" {{showSelectedShare this.name ../nfsExportGrp.exports}}>{{this.name}}</option>
+              {{/each}}
             </select>
           </div>
         </div>
@@ -58,7 +48,8 @@
           <label class="col-xs-4 control-label" for="host_str">NFS Clients<span class="required"> *</span></label>
           <div class="col-sm-6">
             <input class="form-control shorten-input" type="text" name="host_str" id="host_str" data-html = "true"
-	    title="Hosts permitted to NFS mount. There are five broad categories of this input.<br><strong>anonymous:</strong> Just type a single * character and any host will be allowed.<br><strong>single host:</strong> Hostname or a IP address.<br><strong>IP networks:</strong> All hosts of a subnet given by <strong>address/netmask</strong>.<br><strong>wildcards:</strong> Names with wildcard(*, ?) characters for compact notation. for example, *.cs.foo.edu matches all hosts in the domain cs.food.edu.<br><strong>Netgroups:</strong> NIS netgroups given as @group.<br><br>For more details read the manpage for exports." value="<%= nfsExportGroup.get('host_str') %>">
+	    title="Hosts permitted to NFS mount. There are five broad categories of this input.<br><strong>anonymous:</strong> Just type a single * character and any host will be allowed.<br><strong>single host:</strong> Hostname or a IP address.<br><strong>IP networks:</strong> All hosts of a subnet given by <strong>address/netmask</strong>.<br><strong>wildcards:</strong> Names with wildcard(*, ?) characters for compact notation. for example, *.cs.foo.edu matches all hosts in the domain cs.food.edu.<br><strong>Netgroups:</strong> NIS netgroups given as @group.<br><br>For more details read the manpage for exports."
+	    value="{{nfsExportGrp.host_str}}">
           </div>
         </div>
 
@@ -71,7 +62,7 @@
 		   export will be available for this host with rw and no_root_squash
 		   options so that root user can change ownership and permissions of
 		   various directories from this host. This is usually preferred in
-		   conjunction with NIS." value="<%= nfsExportGroup.get('admin_host') %>">
+		   conjunction with NIS." value="{{nfsExportGrp.admin_host}}">
 	  </div>
 	</div>
 
@@ -79,24 +70,15 @@
         <div class="form-group">
           <label class="col-xs-4 control-label" for="mod_choice">Access type</label>
           <div class="col-xs-4">
-            <% _.each(modify_choices, function(c) { %>
-            <label class="radio-inline">
-	      <% if (nfsExportGroup.get('editable')) { %>
-                <% if (nfsExportGroup.get('editable') == c.value) { %>
-                  <input type="radio" name="mod_choice" value="<%= c.value %>" checked="checked">
-                <% } else { %>
-                  <input type="radio" name="mod_choice" value="<%= c.value %>" >
-                <% } %>
-	      <% } else { %>
-		<% if (c.name == "Writable") { %>
-		  <input type="radio" name="mod_choice" value="<%= c.value %>" checked="checked">
-		<% } else { %>
-		  <input type="radio" name="mod_choice" value="<%= c.value %>">
-		<% } %>
-	      <% } %>
-	      <%= c.name %>
-              </label>
-            <% }); %>
+            {{#each modify_choices}}
+                <label class="radio-inline">
+                {{#if ../nfsExportGrp.editable}}
+                        <input type="radio" name="mod_choice" value="{{this.value}}" {{accessType_editView ../nfsExportGrp.editable this.value}}>
+                {{else}}          
+                        <input type="radio" name="mod_choice" value="{{this.value}}" {{accessType_addView this.name}}>
+                {{/if}}
+                {{this.name}}</label>
+            {{/each}}
           </div>
         </div>
 
@@ -104,24 +86,15 @@
         <div class="form-group">
           <label class="col-xs-4 control-label" for="sync_choice">Response type</label>
           <div class="col-xs-4">
-            <% _.each(sync_choices, function(c) { %>
-            <label class="radio-inline">
-	      <% if (nfsExportGroup.get('syncable')) { %>
-                <% if (nfsExportGroup.get('syncable') == c.value) { %>
-                  <input type="radio" name="sync_choice" value="<%= c.value %>" checked="checked">
-                <% } else { %>
-                  <input type="radio" name="sync_choice" value="<%= c.value %>" >
-                <% } %>
-	      <% } else { %>
-	        <% if (c.name == "async") { %>
-		  <input type="radio" name="sync_choice" value="<%= c.value %>" checked="checked">
-		<% } else { %>
-		  <input type="radio" name="sync_choice" value="<%= c.value %>">
-		<% } %>
-	      <% } %>
-              <%= c.name %>
-              </label>
-            <% }); %>
+          {{#each sync_choices}}
+                <label class="radio-inline">
+                {{#if ../nfsExportGrp.syncable}}
+                        <input type="radio" name="sync_choice" value="{{this.value}}" {{responseType_editView ../nfsExportGrp.syncable this.value}} >
+                {{else}}          
+                        <input type="radio" name="sync_choice" value="{{this.value}}" {{responseType_addView this.name}}>
+                {{/if}}
+                {{this.name}}</label>
+            {{/each}}
           </div>
         </div>
 

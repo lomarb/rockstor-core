@@ -25,6 +25,7 @@ from tempfile import mkstemp
 import os
 from shutil import move
 
+
 CHKCONFIG_BIN = '/sbin/chkconfig'
 AUTHCONFIG = '/usr/sbin/authconfig'
 SSHD_CONFIG = '/etc/ssh/sshd_config'
@@ -46,8 +47,8 @@ def init_service_op(service_name, command, throw=True):
     :return: out err rc
     """
     supported_services = ('nfs', 'smb', 'sshd', 'ypbind', 'rpcbind', 'ntpd',
-                          'nslcd', 'netatalk', 'snmpd', 'docker',
-                          'smartd', 'nut-server')
+                          'nslcd', 'netatalk', 'snmpd', 'docker', 'smartd',
+                          'nut-server', 'rockstor-bootstrap', 'rockstor')
     if (service_name not in supported_services):
         raise Exception('unknown service: %s' % service_name)
 
@@ -128,16 +129,21 @@ def service_status(service_name, config=None):
         return init_service_op('nslcd', 'status', throw=False)
     elif (service_name == 'sftp'):
         out, err, rc = init_service_op('sshd', 'status', throw=False)
+        # initial check on sshd status: 0 = OK 3 = stopped
         if (rc != 0):
             return out, err, rc
+        # sshd has sftp subsystem so we check for it's config line which is
+        # inserted or deleted to enable or disable the sftp service.
         with open(SSHD_CONFIG) as sfo:
             for line in sfo.readlines():
-                if (re.match("Subsystem\tsftp\tinternal-sftp", line) is not
+                if (re.match("Subsystem\s+sftp", line) is not
                         None):
                     return out, err, rc
-            return out, err, -1
-    elif (service_name == 'replication' or
-          service_name == 'data-collector'):
+            # -1 not appropriate as inconsistent with bash return codes
+            # Returning 1 as Catchall for general errors.
+            # the calling system interprets -1 as enabled, 1 works for disabled.
+            return out, err, 1
+    elif (service_name in ('replication', 'data-collector', 'ztask-daemon')):
         return superctl(service_name, 'status')
     elif (service_name == 'smb'):
         out, err, rc = run_command([SYSTEMCTL_BIN, 'status', 'smb'],
@@ -153,12 +159,11 @@ def service_status(service_name, config=None):
                            throw=False)
     elif (service_name == 'active-directory'):
         if (config is not None):
-            REALM = '/usr/sbin/realm'
-            o, e, rc = run_command([REALM, 'list', '--name-only'])
-            for l in o:
-                if (l == config['domain']):
-                    return '', '', 0
-        return '', '', -1
+            cmd = [NET, 'ads', 'status', '-U', config.get('username')]
+            return run_command(cmd, input=('%s\n' % config.get('password')),
+                               throw=False)
+        # bootstrap switch subsystem interprets -1 as ON so returning 1 instead
+        return '', '', 1
 
     return init_service_op(service_name, 'status', throw=False)
 
@@ -213,3 +218,24 @@ def refresh_afp_config(afpl):
             rockstor_afp_config(tfo, afpl)
     shutil.move(npath, AFP_CONFIG)
     os.chmod(AFP_CONFIG, 0644)
+
+
+def update_nginx(ip, port):
+    port = int(port)
+    conf = '%s/etc/nginx/nginx.conf' % settings.ROOT_DIR
+    fo, npath = mkstemp()
+    with open(conf) as ifo, open(npath, 'w') as tfo:
+        for line in ifo.readlines():
+            if (re.search('listen.*80 default_server', line) is not None):
+                substr = 'listen 80'
+                if (ip is not None):
+                    substr = 'listen %s:80' % ip
+                line = re.sub(r'listen.*80', substr, line)
+            elif (re.search('listen.*default_server', line) is not None):
+                substr = 'listen %d default_server' % port
+                if (ip is not None):
+                    substr = 'listen %s:%s default_server' % (ip, port)
+                line = re.sub(r'listen.* default_server', substr, line)
+            tfo.write(line)
+    move(npath, conf)
+    superctl('nginx', 'restart')

@@ -3,6 +3,7 @@ monkey.patch_all()
 
 import psutil
 import re
+import json
 import gevent
 from socketio.server import SocketIOServer
 from socketio import socketio_manage
@@ -30,7 +31,6 @@ class DisksWidgetNamespace(BaseNamespace, BroadcastMixin):
         self.spawn(self.send_top_disks)
 
     def recv_disconnect(self):
-        logger.debug('disks namespace disconnected')
         self.switch = False
         self.disconnect()
 
@@ -101,7 +101,6 @@ class CPUWidgetNamespace(BaseNamespace, BroadcastMixin):
         self.spawn(self.send_cpu_data)
 
     def recv_disconnect(self):
-        logger.debug('disconnect received')
         self.send_cpu = False
         self.disconnect()
 
@@ -128,20 +127,18 @@ class NetworkWidgetNamespace(BaseNamespace, BroadcastMixin):
     send = False
 
     def recv_connect(self):
-        logger.debug('network stats connected')
         self.send = True
         self.spawn(self.network_stats)
 
     def recv_disconnect(self):
-        logger.debug('network stats disconnected')
         self.send = False
         self.disconnect()
 
     def network_stats(self):
-        from storageadmin.models import NetworkInterface
+        from storageadmin.models import NetworkDevice
 
         def retrieve_network_stats(prev_stats):
-            interfaces = [i.name for i in NetworkInterface.objects.all()]
+            interfaces = [i.name for i in NetworkDevice.objects.all()]
             interval = 1
             cur_stats = {}
             with open('/proc/net/dev') as sfo:
@@ -235,38 +232,35 @@ class MemoryWidgetNamespace(BaseNamespace, BroadcastMixin):
 
 class ServicesNamespace(BaseNamespace, BroadcastMixin):
 
-    # Called before the recv_connect function
-    def initialize(self):
-        logger.debug('Services have been initialized')
-
     def recv_connect(self):
-        logger.debug("Services has connected")
         self.emit('services:connected', {
             'key': 'services:connected', 'data': 'connected'
         })
         self.spawn(self.send_service_statuses)
 
     def recv_disconnect(self):
-        logger.debug("Services have disconnected")
         self.disconnect()
 
     def send_service_statuses(self):
-        # Iterate through the collection and assign the values accordingly
-        services = [s.name for s in Service.objects.all()]
         while True:
             data = {}
-            for service in services:
-                data[service] = {}
-                output, error, return_code = service_status(service)
-                if (return_code == 0):
-                    data[service]['running'] = return_code
-                else:
-                    data[service]['running'] = return_code
+            for service in Service.objects.all():
+                config = None
+                if (service.config is not None):
+                    try:
+                        config = json.loads(service.config)
+                    except Exception, e:
+                        logger.error('Exception while loading config of '
+                                     'Service(%s): %s' %
+                                     (service.name, e.__str__()))
+                data[service.name] = {}
+                output, error, return_code = service_status(service.name, config=config)
+                data[service.name]['running'] = return_code
 
             self.emit('services:get_services', {
                 'data': data, 'key': 'services:get_services'
             })
-            gevent.sleep(5)
+            gevent.sleep(15)
 
 
 class SysinfoNamespace(BaseNamespace, BroadcastMixin):
@@ -276,22 +270,22 @@ class SysinfoNamespace(BaseNamespace, BroadcastMixin):
     # Called before the connection is established
     def initialize(self):
         self.aw = APIWrapper()
-        logger.debug("Sysinfo has been initialized")
 
     # This function is run once on every connection
     def recv_connect(self):
-        logger.debug("Sysinfo has connected")
         self.emit("sysinfo:sysinfo", {
             "key": "sysinfo:connected", "data": "connected"
         })
         self.start = True
-        gevent.spawn(self.refresh_system)
+        gevent.spawn(self.update_storage_state)
+        gevent.spawn(self.update_check)
+        gevent.spawn(self.update_rockons)
         gevent.spawn(self.send_uptime)
         gevent.spawn(self.send_kernel_info)
+        gevent.spawn(self.prune_logs)
 
     # Run on every disconnect
     def recv_disconnect(self):
-        logger.debug("Sysinfo has disconnected")
         self.start = False
         self.disconnect()
 
@@ -301,7 +295,7 @@ class SysinfoNamespace(BaseNamespace, BroadcastMixin):
             self.emit('sysinfo:uptime', {
                 'data': uptime(), 'key': 'sysinfo:uptime'
             })
-            gevent.sleep(30)
+            gevent.sleep(60)
 
     def send_kernel_info(self):
             try:
@@ -318,43 +312,35 @@ class SysinfoNamespace(BaseNamespace, BroadcastMixin):
                 })
                 self.error('unsupported_kernel', str(e))
 
-    def refresh_system(self):
-        cur_ts = datetime.utcnow()
-        if ((cur_ts - self.environ['scan_ts']).total_seconds() < self.environ['scan_interval']):
-            logger.debug('Skipping system state refresh as it was done less '
-                         'than %d seconds ago.' % self.environ['scan_interval'])
-            return
-        self.update_storage_state()
-        self.update_rockons()
-        self.update_check()
-
     def update_rockons(self):
         try:
             self.aw.api_call('rockons/update', data=None, calltype='post', save_error=False)
-            logger.debug('Updated Rock-on metadata.')
         except Exception, e:
-            logger.debug('failed to update Rock-on metadata. low-level '
+            logger.error('failed to update Rock-on metadata. low-level '
                          'exception: %s' % e.__str__())
 
     def update_storage_state(self):
-        resources = [{'url': 'disks/scan',
-                      'success': 'Disk state updated successfully',
-                      'error': 'Failed to update disk state.'},
-                     {'url': 'commands/refresh-pool-state',
-                      'success': 'Pool state updated successfully',
-                      'error': 'Failed to update pool state.'},
-                     {'url': 'commands/refresh-share-state',
-                      'success': 'Share state updated successfully',
-                      'error': 'Failed to update share state.'},
-                     {'url': 'commands/refresh-snapshot-state',
-                      'success': 'Snapshot state updated successfully',
-                      'error': 'Failed to update snapshot state.'},]
-        for r in resources:
-            try:
-                self.aw.api_call(r['url'], data=None, calltype='post', save_error=False)
-                logger.debug(r['success'])
-            except Exception, e:
-                logger.error('%s. exception: %s' % (r['error'], e.__str__()))
+        #update storage state once a minute as long as
+        #there is a client connected.
+        while self.start:
+            resources = [{'url': 'disks/scan',
+                          'success': 'Disk state updated successfully',
+                          'error': 'Failed to update disk state.'},
+                         {'url': 'commands/refresh-pool-state',
+                          'success': 'Pool state updated successfully',
+                          'error': 'Failed to update pool state.'},
+                         {'url': 'commands/refresh-share-state',
+                          'success': 'Share state updated successfully',
+                          'error': 'Failed to update share state.'},
+                         {'url': 'commands/refresh-snapshot-state',
+                          'success': 'Snapshot state updated successfully',
+                          'error': 'Failed to update snapshot state.'},]
+            for r in resources:
+                try:
+                    self.aw.api_call(r['url'], data=None, calltype='post', save_error=False)
+                except Exception, e:
+                    logger.error('%s. exception: %s' % (r['error'], e.__str__()))
+            gevent.sleep(60)
 
     def update_check(self):
         uinfo = update_check()
@@ -362,7 +348,11 @@ class SysinfoNamespace(BaseNamespace, BroadcastMixin):
             'data': uinfo,
             'key': 'sysinfo:software-update'
         })
-        logger.debug('sent update information %s' % repr(uinfo))
+
+    def prune_logs(self):
+        while self.start:
+            self.aw.api_call('sm/tasks/log/prune', data=None, calltype='post', save_error=False)
+            gevent.sleep(3600)
 
 class Application(object):
     def __init__(self):

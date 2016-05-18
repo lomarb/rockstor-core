@@ -27,21 +27,8 @@
         <tr>
           <td><span class="h3">NFS Service&nbsp;&nbsp;&nbsp;</span></td>
           <td>
-            <% if (service.get('status')) { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="1" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start on" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } else { %>
-              <div class="slider-stop" data-service-name="<%= service.get('name') %>">OFF</div>
-              <div class="slider-ph">
-                <input type="text" class="service-status" value="0" data-service-name="<%= service.get('name') %>"></input>
-              </div>
-              <div class="slider-start" data-service-name="<%= service.get('name') %>">ON</div>
-            <% } %>
-            <div class="command-status" data-service-name="<%= service.get('name') %>">&nbsp;</div>
-          </td>
+          <input type="checkbox" name="nfs-export-checkbox" data-size="mini">
+        </td>
         </tr>
       </table>
     </div>
@@ -51,7 +38,7 @@
     <br>
     <div class="messages"></div>
     <!-- Content -->
-    <% if (nfsExportGroups.length > 0) { %>
+    {{#if collectionNotEmpty}}
       <table id="nfs-exports-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of nfs exports">
         <thead>
           <tr>
@@ -63,38 +50,25 @@
           </tr>
         </thead>
         <tbody>
-          <% nfsExportGroups.each(function(n) { %>
+          {{#each nfsCollection}}
             <tr>
-              <td><%= n.get('host_str') %></td>
-              <td>
-                <% _.each(n.get('exports'), function(e, i) { %>
-                  <% if (i < (n.get('exports').length - 1)) { %>
-                    <%= e.share %>,
-                  <% } else { %>
-                    <%= e.share %>
-                  <% } %>
-
-                <% }); %>
-              </td>
-              <td>
-                <% if (n.get('editable') == 'rw') { %>
-                  Writable
-                <% } else { %>
-                  Read-only
-                <% } %>
-              </td>
-              <td><%= n.get('syncable') %></td>
-              <td>
-                <a href="#nfs-exports/edit/<%= n.id %>"><i class="glyphicon glyphicon-edit"></i></a>
-                &nbsp;
-                <a href="#" class="delete-nfs-export" data-id="<%= n.id %>"><i class="glyphicon glyphicon-trash"></i></a>
-              </td>
+                <td>{{this.host_str}}</td>
+                <td>
+                {{#each this.exports}}
+                    {{this.share}} {{showNfsShares @index ../this.exports}}
+                {{/each}}
+                </td>
+                <td>{{showWritableOption this.editable}}</td>
+                <td>{{this.syncable}}</td>
+                <td><a href="#nfs-exports/edit/{{this.id}}"><i class="glyphicon glyphicon-edit"></i></a>&nbsp;
+                <a href="#" class="delete-nfs-export" data-id="{{this.id}}"><i class="glyphicon glyphicon-trash"></i></a>
+                </td>
             </tr>
-          <% }); %>
+          {{/each}}
         </tbody>
       </table>
-      <div class="ph-pagination"></div>
-    <% } else { %>
+      <div>{{pagination}}</div>
+    {{else}}
       <table id="nfs-exports-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of nfs exports">
         <tbody>
           <tr>
@@ -104,10 +78,11 @@
           </tr>
         </tbody>
       </table>
-    <% } %>
-    <% if (nfsExportGroups.length > 0) { %>
-      Mount a share using <code>mount <%= currentAppliance.get('ip') %>:/export/&lt;share_name&gt; &lt;mount_pt&gt;</code>
-    <% } %>
+   {{/if}}
+  
+    {{#if collectionNotEmpty}}
+      Mount a share using <code>mount {{currentApplianceIp}}:/export/&lt;share_name&gt; &lt;mount_pt&gt;</code>
+    {{/if}}
     <!-- End Content -->
   </div> <!-- col-md-12 -->
 </div> <!-- row -->

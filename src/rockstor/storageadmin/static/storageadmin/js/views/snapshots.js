@@ -23,8 +23,7 @@
  * for the JavaScript code in this page.
  *
  */
-
-SnapshotsView  = RockstorLayoutView.extend({
+SnapshotsView = SnapshotsCommonView.extend({
     events: {
 	"click #js-snapshot-add": "add",
 	"click #js-snapshot-cancel": "cancel",
@@ -38,7 +37,6 @@ SnapshotsView  = RockstorLayoutView.extend({
     initialize: function() {
 	this.constructor.__super__.initialize.apply(this, arguments);
 	this.template = window.JST.share_snapshots;
-	this.paginationTemplate = window.JST.common_pagination;
 	this.addTemplate = window.JST.share_snapshot_add_template;
 	this.module_name = 'snapshots';
 	this.snapshots = this.options.snapshots;
@@ -57,7 +55,7 @@ SnapshotsView  = RockstorLayoutView.extend({
 	];
 	this.parentView = this.options.parentView;
 	this.collection.on("reset", this.renderSnapshots, this);
-
+	this.initHandlebarHelpers();
     },
 
     render: function() {
@@ -70,11 +68,17 @@ SnapshotsView  = RockstorLayoutView.extend({
 	var _this = this;
 	$(this.el).empty();
 
-	$(this.el).append(this.template({
-	    snapshots: this.collection,
-	    selectedSnapshots: this.selectedSnapshots,
-	    share: this.share,
-	    shares: this.shares,
+	var snapshots = _this.collection.toJSON();
+	for(var i = 0; i < snapshots.length; i++){
+	    var shareMatch = _this.shares.find(function(share){
+		return share.get('id') == snapshots[i].share;
+	    });
+	    snapshots[i].share = shareMatch.get('name');
+	}
+	$(this.el).append(_this.template({
+	    snapshots: snapshots,
+	    snapshotsNotEmpty: !_this.collection.isEmpty(),
+	    collection: _this.collection,
 	}));
 	this.$('[rel=tooltip]').tooltip({
 	    placement: 'bottom'
@@ -82,9 +86,6 @@ SnapshotsView  = RockstorLayoutView.extend({
 	this.$('#snapshots-table').tablesorter({
 	    headers: { 0: {sorter: false}}
 	});
-	this.$(".pagination-ph").html(this.paginationTemplate({
-	    collection: this.collection
-	}));
 	return this;
     },
 
@@ -97,10 +98,6 @@ SnapshotsView  = RockstorLayoutView.extend({
 	event.preventDefault();
 	$(this.el).html(this.addTemplate({
 	    snapshots: this.collection,
-	    share: this.share,
-	    shares: this.shares,
-	    modify_choices: this.modify_choices
-
 	}));
 	this.$('#shares').chosen();
 	var err_msg = '';
@@ -109,16 +106,11 @@ SnapshotsView  = RockstorLayoutView.extend({
 	}
 
 	$.validator.addMethod('validateSnapshotName', function(value) {
-	    var snapshot_name = $('#snapshot-name').val();
-	    if (snapshot_name == "") {
-		err_msg = 'Please enter snapshot name';
+	    var snapshot_name = $('#snapshot_name').val();
+	    if (/^[A-Za-z0-9_.-]+$/.test(snapshot_name) == false) {
+		err_msg = 'Please enter a valid snapshot name.';
 		return false;
 	    }
-	    else
-		if(/^[A-Za-z][A-Za-z0-9_.-]*$/.test(snapshot_name) == false){
-		    err_msg = 'Please enter a valid snapshot name.';
-		    return false;
-		}
 	    return true;
 	}, name_err_msg);
 
@@ -127,7 +119,7 @@ SnapshotsView  = RockstorLayoutView.extend({
 	    onfocusout: false,
 	    onkeyup: false,
 	    rules: {
-		'snapshot-name': 'validateSnapshotName',
+		snapshot_name: 'validateSnapshotName',
 		shares: 'required'
 	    },
 	    submitHandler: function() {
@@ -136,7 +128,7 @@ SnapshotsView  = RockstorLayoutView.extend({
 		if (buttonDisabled(button)) return false;
 		disableButton(button);
 		$.ajax({
-		    url: "/api/shares/" + shareName+ "/snapshots/" + _this.$('#snapshot-name').val(),
+		    url: "/api/shares/" + shareName+ "/snapshots/" + _this.$('#snapshot_name').val(),
 		    type: "POST",
 		    dataType: "json",
 		    contentType: 'application/json',
@@ -199,36 +191,6 @@ SnapshotsView  = RockstorLayoutView.extend({
 	    name + '/create-clone';
 	app_router.navigate(url, {trigger: true});
 
-    },
-
-    selectSnapshot: function(event) {
-	var _this = this;
-	id = $(event.currentTarget).attr('data-id');
-	var checked = $(event.currentTarget).prop('checked');
-	this.selectSnapshotWithId(id, checked);
-    },
-
-    selectSnapshotWithId: function(id, checked) {
-	if (checked) {
-	    if (!RockstorUtil.listContains(this.selectedSnapshots, 'id', id)) {
-		RockstorUtil.addToList(
-		    this.selectedSnapshots, this.collection, 'id', id);
-	    }
-	} else {
-	    if (RockstorUtil.listContains(this.selectedSnapshots, 'id', id)) {
-		RockstorUtil.removeFromList(this.selectedSnapshots, 'id', id);
-	    }
-	}
-    },
-
-
-    selectAllSnapshots: function(event) {
-	var _this = this;
-	var checked = $(event.currentTarget).prop('checked');
-	this.$('.js-snapshot-select').prop('checked', checked);
-	this.$('.js-snapshot-select').each(function() {
-	    _this.selectSnapshotWithId($(this).attr('data-id'), checked);
-	});
     },
 
     deleteMultipleSnapshots: function(event) {
@@ -318,7 +280,52 @@ SnapshotsView  = RockstorLayoutView.extend({
 	this.render();
     },
 
+    initHandlebarHelpers: function(){
+	var _this = this;
+	Handlebars.registerHelper('checkboxValue', function(snapName){
+	    var html = '';
+	    if (RockstorUtil.listContains(_this.selectedSnapshots, 'name', snapName)) {
+		html += 'checked="checked"';
+	    } else {
+		html += '';
+	    }
+	    return new Handlebars.SafeString(html);
+	});
+
+	Handlebars.registerHelper('getToc', function(toc){
+	    return moment(toc).format(RS_DATE_FORMAT);
+	});
+
+	Handlebars.registerHelper('getSize', function(size){
+	    return humanize.filesize(size * 1024);
+	});
+
+	//Create Snapshot Template Helpers
+	Handlebars.registerHelper('show_shares_dropdown', function() {
+	    var html = '';
+	    _this.shares.each( function(share, index) {
+		var shareName = share.get('name');
+		html += '<option value="' + shareName + '">' + shareName + '</option>';
+	    });
+	    return new Handlebars.SafeString(html);
+	});
+
+	Handlebars.registerHelper('display_writeable_options', function() {
+	    var html = '';
+	    _.each(_this.modify_choices, function(c) {
+		html += '<label class="radio-inline">';
+		if(c.value == 'yes'){
+		    html += '<input type="radio" name="writable" value="rw" checked>' + c.name;
+		}else{
+		    html += '<input type="radio" name="writable" value="ro" title="Note that (1)read-only snapshots cannot be cloned and (2)Shares cannot be rolled back to read-only snapshots" >' + c.name;
+		}
+		html += '</label>';
+	    });
+	    return new Handlebars.SafeString(html);
+	});
+
+    }
 });
 
-// Add pagination
+//Add pagination
 Cocktail.mixin(SnapshotsView, PaginationMixin);

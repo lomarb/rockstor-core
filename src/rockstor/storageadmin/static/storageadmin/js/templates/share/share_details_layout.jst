@@ -19,19 +19,12 @@
  */
 </script>
 <div class="messages"></div>
-  <% foundWritableSnapshot = false;
-    snapshots.each(function(snapshot, index) {
-      if(snapshot.get("writable")) {
-        foundWritableSnapshot = true;
-      }
-    });
-  %>
 <div class="pull-right">
   <span id="rollback-btn-ph"></span>
-    <a id="js-clone" class="btn btn-primary" href="#shares/<%= share.get('name') %>/create-clone"><i class="glyphicon glyphicon-book "></i> Clone</a>
+    <a id="js-clone" class="btn btn-primary" href="#shares/{{shareName}}/create-clone"><i class="glyphicon glyphicon-book "></i> Clone</a>
     <button id="js-delete" class="btn btn-danger" type="button" type="button"><i class="glyphicon glyphicon-trash "></i> Delete </button>
 </div>
-<span class="h2"><%= share.get('name') %></span>
+<span class="h2">{{shareName}}</span>
 <div class="alert alert-warning">
   <p>
     Share size enforcement is temporarily disabled due to incomplete support in
@@ -47,16 +40,20 @@
     <div class="modal-content">
       <div class="modal-header">
         <button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
-        <h3 id="myModalLabel">Delete Share</h3>
+        <h3 id="myModalLabel">Delete {{shareName}} ?</h3>
       </div>
       <div class="modal-body">
         <div class="messages"></div>
-        <h4>Share (<%= share.get('name') %>) will be deleted. Are you sure?</h4>
+
+        <p>By deleting <strong><em>{{shareName}}</em></strong>, all it's data (<strong>{{shareUsage}}</strong>) will be lost. Are you sure?</p>
+      
+      <label><input type="checkbox" id="force-delete" name="force-delete"> Force Delete &nbsp;<i class="fa fa-info-circle fa-lg" 
+    title="Forces the deletion of undetected Snapshots and then deletes the Share. Useful to forcefully delete the Rock-on root share, for example." rel="tooltip"></i></label>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-default" data-dismiss="modal" aria-hidden="true">Cancel</button>
-        <button id="js-confirm-share-delete" class="btn btn-primary">Confirm</button>
-      </div><!--end modal-fooetr-->
+        <button class="btn btn-default" data-dismiss="modal" aria-hidden="true">No</button>
+        <button id="js-confirm-share-delete" class="btn btn-primary">Yes</button>
+      </div><!--end modal-footer-->
     </div><!--end modal-content-->
   </div><!--end modal-dialog-->
 </div>

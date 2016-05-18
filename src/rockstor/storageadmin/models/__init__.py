@@ -24,7 +24,8 @@ from nfs_export_group import NFSExportGroup
 from nfs_export import NFSExport
 from iscsi_target import IscsiTarget
 from api_keys import APIKeys
-from network_interface import NetworkInterface
+from network_interface import (NetworkConnection, NetworkDevice,
+                               EthernetConnection, TeamConnection, BondConnection)
 from appliance import Appliance
 from support_case import SupportCase
 from dashboard_config import DashboardConfig
@@ -44,7 +45,8 @@ from netatalk_share import NetatalkShare
 from pool_balance import PoolBalance
 from tls_certificate import TLSCertificate
 from rockon import (RockOn, DImage, DContainer, DPort, DVolume,
-                    ContainerOption, DCustomConfig, DContainerLink)
+                    ContainerOption, DCustomConfig, DContainerLink,
+                    DContainerEnv)
 from smart import (SMARTAttribute, SMARTCapability, SMARTErrorLog,
                    SMARTErrorLogSummary, SMARTTestLog, SMARTTestLogDetail,
                    SMARTIdentity, SMARTInfo)

@@ -24,7 +24,7 @@
  *
  */
 
-// routes
+//routes
 var AppRouter = Backbone.Router.extend({
     initialize: function() {
 	this.currentLayout = null;
@@ -36,6 +36,8 @@ var AppRouter = Backbone.Router.extend({
 	"home": "showHome",
 	"disks": "showDisks",
 	"disks/blink/:diskName": "blinkDrive",
+	"disks/smartcustom/:diskName": "smartcustomDrive",
+	"disks/spindown/:diskName": "spindownDrive",
 	"disks/:diskName": "showDisk",
 	"pools": "showPools",
 	"pools/:poolName": "showPool",
@@ -52,9 +54,6 @@ var AppRouter = Backbone.Router.extend({
 	"snapshots": "showSnapshots",
 	"services": "showServices",
 	"services/:serviceName/edit": "configureService",
-	"support":"showSupport",
-	"support/:supportCaseId": "showSupportCase",
-	"add_support_case": "addSupportCase",
 	"users": "showUsers",
 	"users/:username/edit": "editUser",
 	"add-user": "addUser",
@@ -76,8 +75,9 @@ var AppRouter = Backbone.Router.extend({
 	"add-samba-export": "addSambaExport",
 	"samba/edit/:sambaShareId": "editSambaExport",
 	"nfs-exports/edit/:nfsExportGroupId": "editNFSExport",
+	"network/add": "addNetworkConnection",
+	"network/edit/:connectionId": "editNetwork",
 	"network": "showNetworks",
-	"network/:name/edit": "editNetwork",
 	"scheduled-tasks": "showScheduledTasks",
 	"scheduled-tasks/:taskId/log": "showTasks",
 	"add-scheduled-task": "addScheduledTask",
@@ -98,12 +98,13 @@ var AppRouter = Backbone.Router.extend({
 	"images": "showImages",
 	"containers": "showContainers",
 	"appliances": "showAppliances",
+	"edit-hostname/:applianceID/edit": "editHostname",
 	"add-appliance": "addAppliance",
 	"access-keys": "showAccessKeys",
 	"add-access-key": "addAccessKey",
 	"404": "handle404",
 	"500": "handle500",
-	"*path": "showHome",
+	"*path": "showHome"
     },
 
     before: function (route, param) {
@@ -114,10 +115,10 @@ var AppRouter = Backbone.Router.extend({
 	    }
 	} else {
 	    if (route != "setup" && !setup_done) {
-    		app_router.navigate('setup', {trigger: true});
-    		return false;
+		app_router.navigate('setup', {trigger: true});
+		return false;
 	    } else if (route == "setup" && setup_done) {
-    		app_router.navigate('home', {trigger: true});
+		app_router.navigate('home', {trigger: true});
 		return false;
 	    }
 	}
@@ -132,7 +133,6 @@ var AppRouter = Backbone.Router.extend({
 
 
     loginPage: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("setup", "user");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -141,7 +141,6 @@ var AppRouter = Backbone.Router.extend({
 
     },
     doSetup: function() {
-	RockStorSocket.removeAllListeners();
 	$('#maincontent').empty();
 	this.cleanup();
 	this.currentLayout = new SetupView();
@@ -150,7 +149,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showHome: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("dashboard", "dashboard");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -159,7 +157,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showDisks: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "disks");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -176,8 +173,23 @@ var AppRouter = Backbone.Router.extend({
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
+	smartcustomDrive: function(diskName) {
+	this.renderSidebar('storage', 'disks');
+	this.cleanup();
+	this.currentLayout = new SmartcustomDiskView({diskName: diskName});
+	$('#maincontent').empty();
+	$('#maincontent').append(this.currentLayout.render().el);
+    },
+
+	spindownDrive: function(diskName) {
+	this.renderSidebar('storage', 'disks');
+	this.cleanup();
+	this.currentLayout = new SpindownDiskView({diskName: diskName});
+	$('#maincontent').empty();
+	$('#maincontent').append(this.currentLayout.render().el);
+    },
+
     showDisk: function(diskName) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "disks");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -188,7 +200,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showPools: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "pools");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -197,7 +208,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     addPool: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "pools");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -206,7 +216,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showPool: function(poolName, cView) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "pools");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -217,41 +226,9 @@ var AppRouter = Backbone.Router.extend({
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
-    //Support
-
-    showSupport: function() {
-	RockStorSocket.removeAllListeners();
-	this.renderSidebar("support", "support");
-	$('#maincontent').empty();
-	this.cleanup();
-	this.currentLayout = new SupportView();
-	$('#maincontent').append(this.currentLayout.render().el);
-    },
-
-
-    addSupportCase: function() {
-	RockStorSocket.removeAllListeners();
-	this.renderSidebar("support", "support");
-	$('#maincontent').empty();
-	$('#maincontent').append(addSupportCaseView.render().el);
-    },
-
-    showSupportCase: function(supportCaseId) {
-	RockStorSocket.removeAllListeners();
-	this.renderSidebar("support", "support");
-
-	var supportCaseDetailView = new SupportCaseDetailView({
-	    model: new SupportCase({supportCaseId: supportCaseId})
-	});
-	$('#maincontent').empty();
-	$('#maincontent').append(supportCaseDetailView.render().el);
-    },
-
-
     //shares
 
     showShares: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -272,12 +249,11 @@ var AppRouter = Backbone.Router.extend({
     },
 
     addShare: function(poolName) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	$('#maincontent').empty();
 	this.cleanup();
 	if (_.isUndefined(poolName)){
-    	    this.currentLayout = new AddShareView();
+	    this.currentLayout = new AddShareView();
 	} else {
 	    this.currentLayout = new AddShareView({ poolName: poolName });
 	}
@@ -286,7 +262,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showShare: function(shareName, cView) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -297,12 +272,7 @@ var AppRouter = Backbone.Router.extend({
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
-    deleteShare: function(shareName) {
-
-    },
-
     showSnapshots: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "snapshots");
 	$('#maincontent').empty();
 	this.cleanup();
@@ -311,7 +281,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showServices: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("system", "services");
 	this.cleanup();
 	this.currentLayout = new ServicesView();
@@ -404,7 +373,9 @@ var AppRouter = Backbone.Router.extend({
 
     renderSidebar: function(name, selected) {
 	var sidenavTemplate = window.JST["common_sidenav_" + name];
-	$("#sidebar-inner").html(sidenavTemplate({selected: selected}));
+	$("#sidebar-inner").html(sidenavTemplate({
+	    selected: selected,
+	}));
     },
 
     showReplication: function() {
@@ -486,25 +457,30 @@ var AppRouter = Backbone.Router.extend({
     },
 
     showNetworks: function() {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("system", "network");
 	this.cleanup();
-	this.currentLayout = new NetworksView();
+	this.currentLayout = new NetworkView();
 	$('#maincontent').empty();
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
-    editNetwork: function(name) {
-	RockStorSocket.removeAllListeners();
+    editNetwork: function(connectionId) {
 	this.renderSidebar("system", "network");
 	this.cleanup();
-	this.currentLayout = new EditNetworkView({name: name});
+	this.currentLayout = new NetworkConnectionView({connectionId: connectionId});
+	$('#maincontent').empty();
+	$('#maincontent').append(this.currentLayout.render().el);
+    },
+
+    addNetworkConnection: function() {
+	this.renderSidebar("system", "network");
+	this.cleanup();
+	this.currentLayout = new NetworkConnectionView();
 	$('#maincontent').empty();
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
     createCloneFromShare: function(shareName) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	this.cleanup();
 	this.currentLayout = new CreateCloneView({
@@ -516,7 +492,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     createCloneFromSnapshot: function(shareName, snapName) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	this.cleanup();
 	this.currentLayout = new CreateCloneView({
@@ -529,7 +504,6 @@ var AppRouter = Backbone.Router.extend({
     },
 
     rollbackShare: function(shareName) {
-	RockStorSocket.removeAllListeners();
 	this.renderSidebar("storage", "shares");
 	this.cleanup();
 	this.currentLayout = new RollbackView({
@@ -714,6 +688,14 @@ var AppRouter = Backbone.Router.extend({
 	$('#maincontent').append(this.currentLayout.render().el);
     },
 
+    editHostname: function(applianceID) {
+	this.renderSidebar("system", "appliances");
+	this.cleanup();
+	this.currentLayout = new EditHostnameView({applianceID: applianceID});
+	$('#maincontent').empty();
+	$('#maincontent').append(this.currentLayout.render().el);
+    },
+
     showAccessKeys: function() {
 	this.renderSidebar("system", "access-keys");
 	this.cleanup();
@@ -746,7 +728,6 @@ var AppRouter = Backbone.Router.extend({
 
     cleanup: function() {
 	hideMessage();
-	RockStorSocket.removeAllListeners();
 	if (!_.isNull(this.currentLayout)) {
 	    if (_.isFunction(this.currentLayout.cleanup)) {
 		this.currentLayout.cleanup();
@@ -763,7 +744,7 @@ var AppRouter = Backbone.Router.extend({
     },
 
     editEmail: function(emailID) {
-        this.renderSidebar("system", "email");
+	this.renderSidebar("system", "email");
 	this.cleanup();
 	this.currentLayout = new EmailView({emailID: emailID});
 	$('#maincontent').empty();
@@ -772,12 +753,25 @@ var AppRouter = Backbone.Router.extend({
 
 });
 
-// Initiate the router
+Handlebars.registerHelper('sidenav', function(condition) {
+    var html = '';
+    if(this.selected == condition){
+	html += 'class="selected"';
+    }
+    return new Handlebars.SafeString(html);
+});
+//Initiate the router
 var app_router = new AppRouter;
-// ###Render the view###
-// On document load, render the view.
+//###Render the view###
+//On document load, render the view.
 $(document).ready(function() {
     // Start Backbone history a neccesary step for bookmarkable URL's
+
+    $('table.data-table').DataTable({
+        "iDisplayLength": 10,
+        "aLengthMenu": [[10, 15, 30, 45, -1], [10, 15, 30, 45, "All"]]
+    });
+
     if (!RockStorGlobals.navbarLoaded) {
 	refreshNavbar();
     }
@@ -792,7 +786,6 @@ $(document).ready(function() {
     $(document).ajaxError(function(event, jqXhr, ajaxSettings, e) {
 	var commonerr_template = window.JST.common_commonerr;
 	var popuperrTemplate = window.JST.common_popuperr;
-	var unknownerr_template = window.JST.common_unknownerr;
 	var htmlErr = null;
 	var resType = jqXhr.getResponseHeader('Content-Type');
 	var detail = jqXhr.responseText;
@@ -904,11 +897,10 @@ $(document).ready(function() {
 
     var displayLoadAvg = function(data) {
 	var n = parseInt(data);
-	var secs = n % 60;
-	var mins = Math.round(n/60) % 60;
-	var hrs = Math.round(n / (60*60)) % 24;
-	var days = Math.round(n / (60*60*24)) % 365;
-	var yrs = Math.round(n / (60*60*24*365));
+	var mins = Math.floor(n/60) % 60;
+	var hrs = Math.floor(n / (60*60)) % 24;
+	var days = Math.floor(n / (60*60*24)) % 365;
+	var yrs = Math.floor(n / (60*60*24*365));
 	var str = 'Uptime: ';
 	if (yrs == 1) {
 	    str += yrs + ' year, ';
@@ -964,4 +956,66 @@ $(document).ready(function() {
 	}
 
     });
+
+    //insert pagination partial helper functions here
+    Handlebars.registerHelper('pagination', function() {
+
+	var totalPageCount = this.collection.pageInfo().num_pages,
+	    currPageNumber = this.collection.pageInfo().page_number,
+	    maxEntriesPerPage = this.collection.pageSize,
+	    totalEntryCount = this.collection.count,
+	    pagePrev = this.collection.pageInfo().prev,
+	    pageNext = this.collection.pageInfo().next,
+	    backwardIcon = '<i class="glyphicon glyphicon-backward"></i>',
+	    fastBackwardIcon = '<i class="glyphicon glyphicon-fast-backward"></i>',
+	    forwardIcon = '<i class="glyphicon glyphicon-forward"></i>',
+	    fastForwardIcon = '<i class="glyphicon glyphicon-fast-forward"></i>'
+	html = '',
+	entries = currPageNumber * maxEntriesPerPage,
+	entry_prefix = 0;
+
+	if (totalPageCount > 1) {
+	    html += '<nav>';
+	    if(currPageNumber * maxEntriesPerPage > totalEntryCount){
+		entries = totalEntryCount;
+	    }
+	    entry_prefix = (currPageNumber - 1) * (maxEntriesPerPage) + 1 ;
+
+	    html += '<p><i>Displaying entries ' + entry_prefix + ' - ' + (entries) + ' of ' + totalEntryCount + '</i></p>';
+	    html += '<ul class="pagination">';
+	    html += '<li><a class="go-to-page" href="#" data-page="1">' + fastBackwardIcon + '</a></li>';
+	    if (pagePrev) {
+		html += '<li><a class="prev-page" href="#">' + backwardIcon + '</a></li>';
+	    } else {
+		html += '<li class="disabled"><a class="prev-page" href="#">' + backwardIcon + '</a></li>';
+	    }
+
+	    var start = currPageNumber - 4 ;
+	    if(start <= 0){
+		start = 1;
+	    }
+	    var end = start + 9;
+	    if(end > totalPageCount){
+		end = totalPageCount;
+	    }
+	    for (var i=start; i<= end; i++) {
+		if (i == currPageNumber) {
+		    html += '<li class="active"><a class="go-to-page" href="#" data-page="' + i + '">' + i + '</a></li>';
+		} else {
+		    html += '<li><a class="go-to-page" href="#" data-page="' + i + '">' + i + '</a></li>';
+		}
+	    }
+	    if (pageNext) {
+		html += '<li><a class="next-page" href="#">' + fastForwardIcon + '</a></li>';
+	    } else {
+		html += '<li class="disabled"><a class="next-page" href="#">' + forwardIcon + '</a></li>';
+	    }
+	    html += '<li><a class="go-to-page" href="#" data-page="' + totalPageCount + '">'+ fastForwardIcon +'</a></li>';
+	    html += '</ul>';
+	    html += '</nav>';
+	}
+
+	return new Handlebars.SafeString(html);
+    });
+
 });

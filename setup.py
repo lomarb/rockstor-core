@@ -32,11 +32,9 @@ setup(
     package_dir={'': 'src/rockstor'},
     entry_points={
         'console_scripts': [
-            'sm = smart_manager.smd:main',
             'rcli = cli.rock_cli:main',
             'prep_db = scripts.prep_db:main',
-            'replicad = smart_manager.replication.scheduler:main',
-            'mgmt_ip = scripts.mgmt_ip:main',
+            'replicad = smart_manager.replication.listener_broker:main',
             'pwreset = scripts.pwreset:main',
             'backup-plugin = backup.scheduler:main',
             'initrock = scripts.initrock:main',
@@ -54,6 +52,7 @@ setup(
             'delete-api-key = scripts.delete_api_key:main',
             'bootstrap = scripts.bootstrap:main',
             'send-replica = scripts.scheduled_tasks.send_replica:main',
+            'qgroup-test = scripts.qgroup_test:main',
         ],
     },
 
@@ -73,9 +72,12 @@ setup(
         'django-ztask == 0.1.5',
         'mock == 1.0.1',
         'coverage',
-        'gevent-socketio',
-        'psycogreen',
-        'psutil',
+        'gevent == 1.0.2',
+        'gevent-websocket == 0.9.5',
+        'gevent-socketio == 0.3.6',
+        'psycogreen == 1.0',
+        'psutil == 3.3.0',
+        'chardet == 2.3.0',
     ]
 
 )

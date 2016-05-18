@@ -32,7 +32,6 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
 	this.poolName = this.options.poolName;
 	this.cView = this.options.cView;
 	this.template = window.JST.pool_pool_details_layout;
-	this.select_disks_template = window.JST.disk_select_disks_template;
 	this.resize_pool_info_template = window.JST.pool_resize_pool_info;
 	this.compression_info_template = window.JST.pool_compression_info;
 	this.compression_info_edit_template = window.JST.pool_compression_info_edit;
@@ -53,6 +52,7 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
 	this.disks.pageSize = RockStorGlobals.maxPageSize;
 	this.dependencies.push(this.disks);
 	this.cOpts = {'no': 'Dont enable compression', 'zlib': 'zlib', 'lzo': 'lzo'};
+	this.initHandlebarHelpers();
 
     },
 
@@ -72,7 +72,16 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
     },
 
     renderSubViews: function() {
-	$(this.el).html(this.template({pool: this.pool}));
+	var poolNameIsRockstor = false;
+	if (this.pool.get('role') == 'root') {
+	    poolNameIsRockstor = true;
+	}
+	$(this.el).html(this.template({
+	    pool: this.pool,
+	    poolName: this.pool.get('name'),
+	    isPoolNameRockstor: poolNameIsRockstor,
+	}));
+
 	this.subviews['pool-info'] = new PoolInfoModule({ model: this.pool });
 	this.subviews['pool-usage'] = new PoolUsageModule({ model: this.pool });
 	this.subviews['pool-scrubs'] = new PoolScrubTableModule({poolscrubs: this.poolscrubs, pool: this.pool, parentView: this });
@@ -86,9 +95,18 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
 	this.$('#ph-pool-rebalances').html(this.subviews['pool-rebalances'].render().el);
 
 	if (!_.isUndefined(this.cView) && this.cView == 'edit') {
-	    this.$('#ph-compression-info').html(this.compression_info_edit_template({pool: this.pool, cOpts: this.cOpts }));
+	    this.$('#ph-compression-info').html(this.compression_info_edit_template({
+		pool: this.pool,
+		poolMtOptions: this.pool.get('mnt_options'),
+		poolCompression: this.pool.get('compression'),
+		cOpts: this.cOpts
+	    }));
 	    this.showCompressionTooltips(); } else {
-		this.$('#ph-compression-info').html(this.compression_info_template({pool: this.pool})); }
+		this.$('#ph-compression-info').html(this.compression_info_template({
+		    pool: this.pool,
+		    poolCompression: this.pool.get('compression'),
+		    poolMtOptions: this.pool.get('mnt_options'),
+		})); }
 
 	this.$('#ph-resize-pool-info').html(this.resize_pool_info_template({pool:
 									    this.pool})); this.$("ul.nav.nav-tabs").tabs("div.css-panes > div"); if
@@ -268,6 +286,7 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
 	this.$('#ph-compression-info #compression').tooltip({
 	    html: true,
 	    placement: 'top',
+	    container: 'body',
 	    title: "Choose a compression algorithm for this Pool.<br><strong>zlib: </strong>slower but higher compression ratio.<br><strong>lzo: </strong>faster compression/decompression, but ratio smaller than zlib.<br>Enabling compression at the pool level applies to all Shares carved out of this Pool.<br>Don't enable compression here if you like to have finer control at the Share level.<br>You can change the algorithm, disable or enable it later, if necessary."
 	});
 	this.$('#ph-compression-info #mnt_options').tooltip({ placement: 'top' });
@@ -298,5 +317,71 @@ PoolDetailsLayoutView = RockstorLayoutView.extend({
 	if (!_.isUndefined(this.statusIntervalId)) {
 	    window.clearInterval(this.statusIntervalId);
 	}
+    },
+
+    initHandlebarHelpers: function(){
+
+	Handlebars.registerHelper('display_pool_details', function(){
+	    var html = '';
+	    html += '<h3>Details</h3>';
+	    html += 'Created on <strong>' + moment(this.model.get('toc')).format(RS_DATE_FORMAT) + '</strong><br/>';
+	    html += 'Raid Configuration: <strong>' + this.model.get('raid') + '</strong>';
+	    return new Handlebars.SafeString(html);
+	});
+
+	Handlebars.registerHelper('display_compression_details', function(){
+	    var html = '';
+	    html += '<table>';
+	    html += '<tr>';
+	    html += '<td>Compression algorithm:</td>';
+	    html += '<td>';
+	    if (this.poolCompression == 'no') {
+		html += '<strong>None</strong>';
+	    } else if(this.poolCompression != null){
+		html += '<strong>' + this.poolCompression + '</strong>';
+	    }
+	    html += '</td>';
+	    html += '</tr>';
+	    html += '<tr>';
+	    html += '<td>Extra mount options:</td>';
+	    html += '<td>';
+	    if (_.isUndefined(this.poolMtOptions) || _.isNull(this.poolMtOptions) || _.isEmpty(this.poolMtOptions)) {
+		html += '<strong>None</strong>';
+	    } else {
+		html += '<strong>' + this.poolMtOptions + '</strong>';
+	    }
+	    html += '</td>';
+	    html += '</tr>';
+	    html += '</table>';
+	    html += '<a id="js-edit-compression" class="btn btn-primary" href="#">Edit</a>';
+
+
+	    return new Handlebars.SafeString(html);
+	});
+
+	Handlebars.registerHelper('display_compression_options', function(){
+	    var html = '',
+		_this = this;
+	    _.each(_.keys(_this.cOpts), function(c) {
+		if (this.poolCompression == c) {
+		    html += '<option value=' + c + 'selected="selected">' + _this.cOpts[c] + '</option>';
+		} else {
+		    html += '<option value=' + c + '>' + _this.cOpts[c] + '</option>';
+		}
+	    });
+	    return new Handlebars.SafeString(html);
+	});
+
+	Handlebars.registerHelper('disks_insidePools_tbody', function(){
+	    var html = '',
+		_this = this;
+	    _.each(_this.pool.get('disks'), function(disk, i) {
+		html += '<tr>';
+		html += '<td>' + disk.name + '</td>';
+		html += '<td>' + humanize.filesize(disk.size*1024) + '</td>';
+		html += '</tr>';
+	    });
+	    return new Handlebars.SafeString(html);
+	});
     }
 });

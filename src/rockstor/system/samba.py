@@ -28,6 +28,7 @@ TESTPARM = '/usr/bin/testparm'
 SMB_CONFIG = '/etc/samba/smb.conf'
 SYSTEMCTL = '/usr/bin/systemctl'
 CHMOD = '/bin/chmod'
+RS_HEADER = '####BEGIN: Rockstor SAMBA CONFIG####'
 
 
 def test_parm(config='/etc/samba/smb.conf'):
@@ -45,7 +46,7 @@ def test_parm(config='/etc/samba/smb.conf'):
 
 
 def rockstor_smb_config(fo, exports):
-    fo.write('####BEGIN: Rockstor SAMBA CONFIG####\n')
+    fo.write('%s\n' % RS_HEADER)
     for e in exports:
         admin_users = ''
         for au in e.admin_users.all():
@@ -76,7 +77,7 @@ def refresh_smb_config(exports):
     with open(SMB_CONFIG) as sfo, open(npath, 'w') as tfo:
         rockstor_section = False
         for line in sfo.readlines():
-            if (re.match('####BEGIN: Rockstor SAMBA CONFIG####', line)
+            if (re.match(RS_HEADER, line)
                 is not None):
                 rockstor_section = True
                 rockstor_smb_config(tfo, exports)
@@ -89,13 +90,48 @@ def refresh_smb_config(exports):
     shutil.move(npath, SMB_CONFIG)
 
 
-def update_global_config(workgroup):
+def update_global_config(workgroup=None, realm=None, idmap_range=None, rfc2307=False):
     fh, npath = mkstemp()
     with open(SMB_CONFIG) as sfo, open(npath, 'w') as tfo:
+        tfo.write('[global]\n')
+        if (workgroup is not None):
+            tfo.write('    workgroup = %s\n' % workgroup)
+        tfo.write('    log file = /var/log/samba/log.%m\n')
+        if (realm is not None):
+            idmap_high = int(idmap_range.split()[2])
+            default_range = '%s - %s' % (idmap_high + 1, idmap_high + 1000000)
+            tfo.write('    security = ads\n')
+            tfo.write('    realm = %s\n' % realm)
+            tfo.write('    template shell = /bin/sh\n')
+            tfo.write('    kerberos method = secrets and keytab\n')
+            tfo.write('    winbind use default domain = false\n')
+            tfo.write('    winbind offline logon = true\n')
+            tfo.write('    winbind enum users = yes\n')
+            tfo.write('    winbind enum groups = yes\n')
+            tfo.write('    idmap config * : backend = tdb\n')
+            tfo.write('    idmap config * : range = %s\n' % default_range)
+            #enable rfc2307 schema and collect UIDS from AD DC
+            #we assume if rfc2307 then winbind nss info too - collects AD DC home and shell for each user 
+            if (rfc2307):
+                tfo.write('    idmap config %s : backend = ad\n' % workgroup)
+                tfo.write('    idmap config %s : range = %s\n' % (workgroup, idmap_range))
+                tfo.write('    idmap config %s : schema_mode = rfc2307\n' % workgroup)
+                tfo.write('    winbind nss info = rfc2307\n')
+            else:
+                tfo.write('    idmap config %s : backend = rid\n' % workgroup)
+                tfo.write('    idmap config %s : range = %s\n' % (workgroup, idmap_range))
+        #@todo: remove log level once AD integration is working well for users.
+        tfo.write('    log level = 3\n')
+        tfo.write('    load printers = no\n')
+        tfo.write('    cups options = raw\n')
+        tfo.write('    printcap name = /dev/null\n\n')
+
+        rockstor_section = False
         for line in sfo.readlines():
-            if (re.match('workgroup = ', line.strip()) is not None):
-                line = 'workgroup = %s\n' % workgroup
-            tfo.write(line)
+            if (re.match(RS_HEADER, line) is not None):
+                rockstor_section = True
+            if (rockstor_section is True):
+                tfo.write(line)
     test_parm(npath)
     shutil.move(npath, SMB_CONFIG)
 

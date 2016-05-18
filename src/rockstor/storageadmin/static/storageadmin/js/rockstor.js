@@ -202,28 +202,6 @@ RockStorWidgetView = Backbone.View.extend({
 
 });
 
-RockstorButtonView = Backbone.View.extend({
-    tagName: 'div',
-    className: 'button-bar',
-
-    initialize: function() {
-	this.actions = this.options.actions;
-	this.layout = this.options.layout;
-	this.template = window.JST.common_button_bar;
-
-    },
-
-    render: function() {
-	$(this.el).append(this.template({actions: this.actions}));
-	this.attachActions();
-	return this;
-    },
-
-    attachActions: function() {
-
-    }
-
-});
 
 function getCookie(name) {
 	var cookieValue = null;
@@ -354,7 +332,7 @@ function refreshNavbar() {
 
     var navbarTemplate = window.JST.common_navbar;
     $("#navbar-links").html(navbarTemplate({
-	logged_in: logged_in,
+	logged_in: logged_in
 
     }));
 
@@ -478,7 +456,9 @@ var RockstorUtil = function() {
 	    var i = _.indexOf(_.map(list, function(obj) {
 		return obj.get(name);
 	    }), value);
-	    list.splice(i,1);
+	    if (i != -1) {
+		list.splice(i,1);
+	    }
 	}
     };
     return util;
@@ -501,7 +481,6 @@ RockstorWizardPage = Backbone.View.extend({
     save: function() {
 	return $.Deferred().resolve();
     }
-
 });
 
 WizardView = Backbone.View.extend({

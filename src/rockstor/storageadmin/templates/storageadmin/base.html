@@ -25,7 +25,7 @@
 
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="icon" type="image/png" href="http://rockstor.com/media/images/ico/favicon.ico">
+    <link rel="icon" type="image/png" href="/static/storageadmin/img/favicon.ico">
     <title> RockStor {% block title %}{% endblock %}</title>
     <link href="/static/storageadmin/css/bootstrap.min.css" rel="stylesheet">
     <link href="/static/js/lib/cron/jquery-cron.css" rel="stylesheet">
@@ -33,6 +33,8 @@
     <link href="/static/storageadmin/css/style.css" rel="stylesheet">
     <link href="/static/storageadmin/css/font-awesome-4.0.3/css/font-awesome.min.css" rel="stylesheet">
     <link href="/static/storageadmin/css/bootstrap-switch.min.css" rel="stylesheet">
+    <link href="/static/storageadmin/css/dataTables.bootstrap.min.css" rel="stylesheet">
+
 
 
     <!-- Le HTML5 shim, for IE6-8 support of HTML5 elements -->
@@ -101,10 +103,14 @@
     <script src="/static/js/lib/chosen.jquery.js"></script>
     <script src="/static/js/lib/socket.io.min.js"></script>
     <script src="/static/js/lib/cron/jquery-cron.js"></script>
+    <script src="/static/js/lib/cron/jquery-cron-window.js"></script>
     <script src="/static/js/lib/gentleSelect/jquery-gentleSelect.js"></script>
     <script src="/static/js/lib/later.min.js"></script>
     <script src="/static/js/lib/prettycron.js"></script>
     <script src="/static/js/lib/bootstrap-switch.min.js"></script>
+    <script src="/static/js/lib/handlebars-v4.0.5.js"></script>
+    <script src="/static/js/lib/jquery.dataTables.min.js"></script>
+    <script src="/static/js/lib/dataTables.bootstrap.min.js"></script>
     <script src="/static/storageadmin/js/storageadmin.js"></script>
   </head>
 
@@ -259,8 +265,6 @@
       {% endif %}
       RockStorGlobals.showAnalyticsModal = false;
       RockStorGlobals.pageSize = {{ page_size }};
-      RockStorGlobals.replica_data_port = {{ replica_data_port }};
-      RockStorGlobals.replica_meta_port = {{ replica_meta_port }};
     </script>
   <script>
       // Controls hamburger menu collapse after click

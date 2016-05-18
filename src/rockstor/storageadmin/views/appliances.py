@@ -39,8 +39,9 @@ class ApplianceListView(rfc.GenericView):
     serializer_class = ApplianceSerializer
 
     def get_queryset(self, *args, **kwargs):
-        self._update_hostname()
-        return Appliance.objects.all()
+        with self._handle_exception(self.request):
+            self._update_hostname()
+            return Appliance.objects.all()
 
     @staticmethod
     @transaction.atomic
@@ -75,12 +76,12 @@ class ApplianceListView(rfc.GenericView):
                          'all inputs and try again.')
                 handle_exception(Exception(e_msg), request)
 
-    
+
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         with self._handle_exception(request):
-            ip = request.data['ip']
-            current_appliance = request.data['current_appliance']
+            ip = request.data.get('ip', '')
+            current_appliance = request.data.get('current_appliance')
             # authenticate if not adding current appliance
             if (Appliance.objects.filter(ip=ip).exists()):
                 e_msg = ('The appliance with ip = %s already exists and '
@@ -126,24 +127,37 @@ class ApplianceDetailView(rfc.GenericView):
     serializer_class = ApplianceSerializer
 
     def get(self, *args, **kwargs):
-        if 'ip' in self.kwargs or 'id' in self.kwargs:
-            try:
-                if 'ip' in self.kwargs:
-                    data = Appliance.objects.get(ip=self.kwargs['ip'])
-                else:
-                    data = Appliance.objects.get(id=self.kwargs['id'])
-                serialized_data = ApplianceSerializer(data)
-                return Response(serialized_data.data)
-            except:
-                return Response()
+        with self._handle_exception(self.request):
+            data = Appliance.objects.get(id=self.kwargs.get('appid'))
+            serialized_data = ApplianceSerializer(data)
+            return Response(serialized_data.data)
 
     @transaction.atomic
-    def delete(self, request, id):
+    def put(self, request, appid):
         try:
-            appliance = Appliance.objects.get(pk=id)
+            appliance = Appliance.objects.get(pk=appid)
         except Exception, e:
             logger.exception(e)
-            e_msg = ('Appliance(%s) does not exist' % id)
+            e_msg = ('Appliance(%s) does not exist' % appid)
+            handle_exception(Exception(e_msg), request)
+
+        try:
+            appliance.hostname = request.data['hostname']
+            appliance.save()
+            sethostname(appliance.hostname)
+            return Response()
+        except Exception, e:
+            logger.exception(e)
+            e_msg = ('Failed updating hostname for appliance with id = %d' % appid)
+            handle_exception(e, request)
+
+    @transaction.atomic
+    def delete(self, request, appid):
+        try:
+            appliance = Appliance.objects.get(pk=appid)
+        except Exception, e:
+            logger.exception(e)
+            e_msg = ('Appliance(%s) does not exist' % appid)
             handle_exception(Exception(e_msg), request)
 
         if (Replica.objects.filter(appliance=appliance.uuid).exists()):
@@ -157,5 +171,5 @@ class ApplianceDetailView(rfc.GenericView):
             return Response()
         except Exception, e:
             logger.exception(e)
-            e_msg = ('Delete failed for appliance with id = %d' % id)
+            e_msg = ('Delete failed for appliance with id = %d' % appid)
             handle_exception(e, request)

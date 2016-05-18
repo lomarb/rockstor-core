@@ -39,6 +39,7 @@ AddReplicationTaskView = RockstorLayoutView.extend({
 	this.appliances = new ApplianceCollection();
 	this.dependencies.push(this.appliances);
 	this.replicas = new ReplicaCollection();
+	this.replica = null; // for new replica tasks.
 	this.dependencies.push(this.replicas);
 	this.remote_pools = [];
 
@@ -62,16 +63,29 @@ AddReplicationTaskView = RockstorLayoutView.extend({
 		return replica.get('share') == share.get('name');
 	    })) ;
 	});
+	this.freeShares2 = this.freeShares.map(function(fs) {
+	    return fs.toJSON();
+	});
 	if (this.remote_pools.length == 0) {
 	    this.fetchRemotePools();
 	}
+	//ip and port of the remote replication service.
+	var listener_ip = null;
+	var listener_port = 10002;
+	var replicaJSON = null;
+	if (this.replica) {
+	    listener_ip = this.replica.get('replicaion_ip');
+	    listener_port = this.replica.get('remote_port');
+	    replicaJSON = this.replica.toJSON();
+	}
+
 	$(this.el).html(this.template({
-	    shares: this.freeShares,
-	    appliances: this.appliances,
-	    replica: this.replica,
+	    shares: this.freeShares2,
+	    appliances: this.appliances.toJSON(),
+	    replica: replicaJSON,
+	    listener_ip: listener_ip,
+	    listener_port: listener_port,
 	    replicaId: this.replicaId,
-	    replica_data_port: RockStorGlobals.replica_data_port,
-	    replica_meta_port: RockStorGlobals.replica_meta_port,
 	    remote_pools: this.remote_pools
 	}));
 	if (!_.isUndefined(this.replicaId) && !_.isNull(this.replica)) {

@@ -36,10 +36,10 @@ ConfigBackupView = RockstorLayoutView.extend({
 	this.constructor.__super__.initialize.apply(this, arguments);
 	this.template = window.JST.cb_cb;
 	this.cb_table_template = window.JST.cb_cb_table;
-	this.pagination_template = window.JST.common_pagination;
 	this.collection = new ConfigBackupCollection();
 	this.dependencies.push(this.collection);
 	this.collection.on("reset", this.renderConfigBackups, this);
+  this.initHandlebarHelpers();
     },
 
     render: function() {
@@ -49,7 +49,11 @@ ConfigBackupView = RockstorLayoutView.extend({
 
     renderConfigBackups: function() {
 	$(this.el).html(this.template({ collection: this.collection }));
-	this.$("#cb-table-ph").html(this.cb_table_template({ collection: this.collection }));
+	this.$("#cb-table-ph").html(this.cb_table_template({
+	configBackup: this.collection.toJSON(),
+    collection: this.collection,
+    collectionNotEmpty: !this.collection.isEmpty(),
+  }));
     },
 
     newBackup: function() {
@@ -187,6 +191,12 @@ ConfigBackupView = RockstorLayoutView.extend({
     xhr.send(formData);
     // Replace the original function
     XMLHttpRequest.prototype.send = originalSend;
+  },
+
+  initHandlebarHelpers: function(){
+	  Handlebars.registerHelper('humanReadableSize', function(size){
+		  return humanize.filesize(size);
+	  });
   }
 });
 

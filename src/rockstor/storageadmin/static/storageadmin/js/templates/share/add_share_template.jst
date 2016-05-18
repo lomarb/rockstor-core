@@ -29,32 +29,14 @@
       <div class="form-group">
         <label for="share_name" class="col-sm-4 control-label">Name</label>
         <div class="col-sm-6">
-          <input class="form-control" type="text" name="share_name" id="share_name" title="Name of the Share must start with a letter(a-z) and can be followed by any of the following characters: letter(a-z), digits(0-9), hyphen(-), underscore(_) or a period(.).">
+          <input class="form-control" type="text" name="share_name" id="share_name" title="Follow characters are allowed: letter(a-z or A-Z), digit(0-9), hyphen(-), underscore(_) or a period(.).">
         </div>
       </div>
       <div class="form-group">
         <label for="pool_name" class="col-xs-4 control-label">Pool <span class="required">*</span></label>
         <div class="col-sm-6">
           <select class="form-control" id="pool_name" name="pool_name" title="Select pool the share should belong to">
-  	  <% if(poolName == ''){%>
-            <% pools.each(function(pool, index) { %>
-            <% if (index > 0) { %>
-            <option value="<%= pool.get('name') %>"> <%= pool.get('name') %> </option>
-            <% } else{ %>
-            <option value="<%= pool.get('name') %>" selected="selected"> <%= pool.get('name') %> </option>
-            <% } %>
-            <% }); %>
-  	  <%} else { %>
-            <% pools.each(function(pool, index) { %>
-            <% if (index >= 0) { %>
-            <% if(poolName != pool.get('name')){ %>
-            <option value="<%= pool.get('name') %>"> <%= pool.get('name') %> </option>
-            <% }else{ %>
-            <option value="<%= pool.get('name') %>" selected="selected"> <%= pool.get('name') %> </option>
-            <% } %>
-            <% } %>
-            <% }); %>
-  	  <% } %>
+          {{print_pool_names}}
           </select>
         </div>
       </div>

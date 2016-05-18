@@ -29,104 +29,124 @@
  */
 
 SharesView = RockstorLayoutView.extend({
-  events: {
-    "click a[data-action=delete]": "deleteShare",
-    'click #js-cancel': 'cancel',
-    'click #js-confirm-share-delete': 'confirmShareDelete'
-  },
+	events: {
+		"click a[data-action=delete]": "deleteShare",
+		'click #js-cancel': 'cancel',
+		'click #js-confirm-share-delete': 'confirmShareDelete'
+	},
 
-  initialize: function() {
-    this.constructor.__super__.initialize.apply(this, arguments);
+	initialize: function() {
+		this.constructor.__super__.initialize.apply(this, arguments);
 
-    this.template = window.JST.share_shares;
-    this.shares_table_template = window.JST.share_shares_table;
-    this.pagination_template = window.JST.common_pagination;
+		this.template = window.JST.share_shares;
+		this.shares_table_template = window.JST.share_shares_table;
+		this.pools = new PoolCollection();
+		this.collection = new ShareCollection();
+		this.dependencies.push(this.pools);
+		this.dependencies.push(this.collection);
+		this.pools.on("reset", this.renderShares, this);
+		this.collection.on("reset", this.renderShares, this);
+		this.initHandlebarHelpers();
+	},
 
-    this.pools = new PoolCollection();
-    this.collection = new ShareCollection();
-    this.dependencies.push(this.pools);
-    this.dependencies.push(this.collection);
+	render: function() {
+		this.fetch(this.renderShares, this);
+		return this;
+	},
 
-    this.pools.on("reset", this.renderShares, this);
-    this.collection.on("reset", this.renderShares, this);
-  },
+	renderShares: function() {
+		if (this.$('[rel=tooltip]')) {
+			this.$('[rel=tooltip]').tooltip('hide');
+		}
+		if (!this.pools.fetched || !this.collection.fetched) {
+			return false;
+		}
+		$(this.el).html(this.template({
+			collection: this.collection,
+			pools: this.pools
+		}));
+		this.$("#shares-table-ph").html(this.shares_table_template({
+			collection: this.collection,
+			shares: this.collection.toJSON(),
+			collectionNotEmpty: !this.collection.isEmpty(),
+			pools: this.pools,
+			poolsNotEmpty: !this.pools.isEmpty()
+		}));
 
-  render: function() {
-    this.fetch(this.renderShares, this);
-    return this;
-  },
+		this.$("#shares-table").tablesorter({
+			headers: {
+				// assign the fourth column (we start counting zero)
+				4: {
+					// disable it by setting the property sorter to false
+					sorter: false
+				}
+			}
+		});
+		this.$('[rel=tooltip]').tooltip({placement: 'bottom'});
+	},
 
-  renderShares: function() {
-    if (this.$('[rel=tooltip]')) {
-      this.$('[rel=tooltip]').tooltip('hide');
-    }
-    if (!this.pools.fetched || !this.collection.fetched) {
-      return false;
-    }
-    $(this.el).html(this.template({
-      collection: this.collection,
-      pools: this.pools
-    }));
-    this.$("#shares-table-ph").html(this.shares_table_template({
-      collection: this.collection,
-      pools: this.pools
-    }));
-    this.$(".pagination-ph").html(this.pagination_template({
-      collection: this.collection
-    }));
-    this.$("#shares-table").tablesorter({
-       headers: {
-            // assign the fourth column (we start counting zero)
-            4: {
-                // disable it by setting the property sorter to false
-                sorter: false
-            }
-         }
-    });
-    this.$('[rel=tooltip]').tooltip({placement: 'bottom'});
-  },
+//	delete button handler
+	deleteShare: function(event) {
+		var _this = this;
+		var button = $(event.currentTarget);
+		if (buttonDisabled(button)) return false;
+		shareName = button.attr('data-name');
+		shareUsage = button.attr('data-usage');
+		// set share name in confirm dialog
+		_this.$('.pass-share-name').html(shareName);
+		_this.$('#pass-share-usage').html(shareUsage);
+		//show the dialog
+		_this.$('#delete-share-modal').modal();
+		return false;
+	},
 
-// delete button handler
-  deleteShare: function(event) {
-    var _this = this;
-    var button = $(event.currentTarget);
-    if (buttonDisabled(button)) return false;
-    shareName = button.attr('data-name');
-    // set share name in confirm dialog
-    _this.$('#pass-share-name').html(shareName);
-    //show the dialog
-    _this.$('#delete-share-modal').modal();
-    return false;
-  },
+	confirmShareDelete: function(event) {
+		var _this = this;
+		var button = $(event.currentTarget);
+		if (buttonDisabled(button)) return false;
+		disableButton(button);
+		var url = "/api/shares/" + shareName;
+		if($("#force-delete").prop("checked")){
+			url += "/force";
+		}
+		$.ajax({
+			url: url,
+			type: "DELETE",
+		    dataType: "json",
+			success: function() {
+				_this.collection.fetch({reset: true});
+				enableButton(button);
+				_this.$('#delete-share-modal').modal('hide');
+				$('.modal-backdrop').remove();
+				app_router.navigate('shares', {trigger: true})
+			},
+			error: function(xhr, status, error) {
+				enableButton(button);
+			}
+		});
+	},
+	cancel: function(event) {
+		if (event) event.preventDefault();
+		app_router.navigate('shares', {trigger: true})
+	},
 
-//modal confirm button handler
-  confirmShareDelete: function(event) {
-    var _this = this;
-    var button = $(event.currentTarget);
-    if (buttonDisabled(button)) return false;
-        disableButton(button);
-      $.ajax({
-        url: "/api/shares/" + shareName,
-        type: "DELETE",
-        dataType: "json",
-        success: function() {
-          _this.collection.fetch({reset: true});
-          enableButton(button);
-          _this.$('#delete-share-modal').modal('hide');
-          $('.modal-backdrop').remove();
-          app_router.navigate('shares', {trigger: true})
-        },
-        error: function(xhr, status, error) {
-          enableButton(button);
-        }
-      });
-    },
+	initHandlebarHelpers: function(){
 
-    cancel: function(event) {
-      if (event) event.preventDefault();
-      app_router.navigate('shares', {trigger: true})
-    }
+		Handlebars.registerHelper('humanize_size', function(num) {
+			return humanize.filesize(num * 1024);
+		});
+		Handlebars.registerHelper('displayCompressionAlgo', function(shareCompression,shareName) {
+			var html = '';
+			if(shareCompression && shareCompression != 'no'){
+				html += shareCompression;
+			}else{
+				html += 'None(defaults to pool level compression, if any)   ' +
+				'<a href="#shares/' + shareName + '/?cView=edit"><i class="glyphicon glyphicon-pencil"></i></a>';
+			}
+			return new Handlebars.SafeString(html);
+		});
+	}
 });
 
-// Add pagination
+//Add pagination
 Cocktail.mixin(SharesView, PaginationMixin);
