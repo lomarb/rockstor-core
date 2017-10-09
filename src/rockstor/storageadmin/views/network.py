@@ -16,32 +16,31 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-import re
 import json
-from tempfile import mkstemp
-from shutil import move
 from django.db import transaction
-from django.conf import settings
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
-from storageadmin.models import (NetworkConnection, NetworkDevice, Appliance,
+from storageadmin.models import (NetworkConnection, NetworkDevice,
                                  EthernetConnection, TeamConnection,
                                  BondConnection)
 from smart_manager.models import Service
 from storageadmin.util import handle_exception
-from storageadmin.serializers import (NetworkDeviceSerializer, NetworkConnectionSerializer)
-from system.osi import (config_network_device, get_net_config, update_issue)
-from system.services import superctl
+from storageadmin.serializers import (NetworkDeviceSerializer,
+                                      NetworkConnectionSerializer)
 from system import network
 import rest_framework_custom as rfc
 
 import logging
 logger = logging.getLogger(__name__)
 
+MIN_MTU = 1500
+MAX_MTU = 9000
+DEFAULT_MTU = MIN_MTU
+
 
 class NetworkMixin(object):
-    #Runners for teams. @todo: support basic defaults + custom configuration.
-    #@todo: lacp doesn't seem to be activating
+    # Runners for teams. @todo: support basic defaults + custom configuration.
+    # @todo: lacp doesn't seem to be activating
     runners = {
         'broadcast': '{ "runner": {"name": "broadcast"}}',
         'roundrobin': '{ "runner": {"name": "roundrobin"}}',
@@ -49,7 +48,8 @@ class NetworkMixin(object):
         'loadbalance': '{ "runner": {"name": "loadbalance"}}',
         'lacp': '{ "runner": {"name": "lacp"}}',
     }
-    team_profiles = ('broadcast', 'roundrobin', 'activebackup', 'loadbalance', 'lacp')
+    team_profiles = ('broadcast', 'roundrobin', 'activebackup', 'loadbalance',
+                     'lacp')
     bond_profiles = ('balance-rr', 'active-backup', 'balance-xor', 'broadcast',
                      '802.3ad', 'balance-tlb', 'balance-alb')
 
@@ -91,7 +91,8 @@ class NetworkMixin(object):
             return config
         try:
             co.master = NetworkConnection.objects.get(name=config['master'])
-        except NetworkConnection.DoesNotExist:
+        except (NetworkConnection.DoesNotExist,
+                NetworkConnection.MultipleObjectsReturned):
             if (not isinstance(defer_list, list)):
                 raise
             defer_list.append({'uuid': co.uuid, 'master': config['master']})
@@ -116,7 +117,7 @@ class NetworkMixin(object):
             NetworkConnection.objects.filter(uuid=nco.uuid).update(**config)
             del cmap[nco.uuid]
         for uuid in cmap:
-            #new connections not yet in administrative state.
+            # new connections not yet in administrative state.
             config = cmap[uuid]
             config['uuid'] = uuid
             ctype = ctype_d = None
@@ -126,25 +127,34 @@ class NetworkMixin(object):
                 del(config[ctype])
                 del(config['ctype'])
             if ('master' in config):
-                defer_master_updates.append({'uuid': uuid, 'master': config['master']})
+                defer_master_updates.append({'uuid': uuid, 'master':
+                                             config['master']})
                 del(config['master'])
             nco = NetworkConnection.objects.create(**config)
             if (ctype is not None):
                 cls._update_or_create_ctype(nco, ctype, ctype_d)
         for e in defer_master_updates:
             slave_co = NetworkConnection.objects.get(uuid=e['uuid'])
-            slave_co.master = NetworkConnection.objects.get(name=e['master'])
+            try:
+                slave_co.master = NetworkConnection.objects.get(name=e['master'])  # noqa E501
+            except (NetworkConnection.DoesNotExist,
+                    NetworkConnection.MultipleObjectsReturned) as e:
+                logger.exception(e)
             slave_co.save()
 
     @staticmethod
     @transaction.atomic
     def _refresh_devices():
         dmap = network.devices()
+
         def update_connection(dconfig):
             if ('connection' in dconfig):
                 try:
-                    dconfig['connection'] = NetworkConnection.objects.get(name=dconfig['connection'])
-                except NetworkConnection.DoesNotExist:
+                    dconfig['connection'] = NetworkConnection.objects.get(
+                        name=dconfig['connection'])
+                except (NetworkConnection.DoesNotExist,
+                        NetworkConnection.MultipleObjectsReturned) as e:
+                    logger.exception(e)
                     dconfig['connection'] = None
 
         for ndo in NetworkDevice.objects.all():
@@ -168,15 +178,16 @@ class NetworkDeviceListView(rfc.GenericView, NetworkMixin):
     def get_queryset(self, *args, **kwargs):
         with self._handle_exception(self.request):
             self._refresh_devices()
-            #don't return unmanaged devices
-            #return NetworkDevice.objects.filter(~Q(state='10 (unmanaged)'))
+            # don't return unmanaged devices return
+            # NetworkDevice.objects.filter(~Q(state='10 (unmanaged)'))
             return NetworkDevice.objects.all()
+
 
 class NetworkConnectionListView(rfc.GenericView, NetworkMixin):
     serializer_class = NetworkConnectionSerializer
     ctypes = ('ethernet', 'team', 'bond')
 
-    #ethtool is the default link watcher.
+    # ethtool is the default link watcher.
 
     config_methods = ('auto', 'manual')
 
@@ -193,8 +204,8 @@ class NetworkConnectionListView(rfc.GenericView, NetworkMixin):
             raise Exception('A minimum of %d devices are required' % size)
         for d in devices:
             try:
-                ndo = NetworkDevice.objects.get(name=d)
-                #if device belongs to another connection, change it.
+                NetworkDevice.objects.get(name=d)
+                # if device belongs to another connection, change it.
             except NetworkDevice.DoesNotExist:
                 e_msg = ('Unknown network device(%s)' % d)
                 handle_exception(Exception(e_msg), request)
@@ -206,32 +217,38 @@ class NetworkConnectionListView(rfc.GenericView, NetworkMixin):
             ipaddr = gateway = dns_servers = search_domains = None
             name = request.data.get('name')
             if (NetworkConnection.objects.filter(name=name).exists()):
-                e_msg = ('Connection name(%s) is already in use. Choose a different name.' % name)
+                e_msg = ('Connection name(%s) is already in use. Choose a '
+                         'different name.' % name)
                 handle_exception(Exception(e_msg), request)
 
-            #auto of manual
+            # auto of manual
             method = request.data.get('method')
             if (method not in self.config_methods):
-                e_msg = ('Unsupported config method(%s). Supported ones include: %s' % (method, self.config_methods))
+                e_msg = ('Unsupported config method(%s). Supported ones '
+                         'include: %s' % (method, self.config_methods))
                 handle_exception(Exception(e_msg), request)
             if (method == 'manual'):
-                #ipaddr is of the format <IP>/<netmask>. eg: 192.168.1.2/24. If netmask is not given, it defaults to 32.
+                # ipaddr is of the format <IP>/<netmask>. eg:
+                # 192.168.1.2/24. If netmask is not given, it defaults to 32.
                 ipaddr = request.data.get('ipaddr')
-                gateway = request.data.get('gateway')
+                gateway = request.data.get('gateway', None)
                 dns_servers = request.data.get('dns_servers', None)
                 search_domains = request.data.get('search_domains', None)
 
-            #connection type can be one of ethernet, team or bond
+            # connection type can be one of ethernet, team or bond
             ctype = request.data.get('ctype')
             if (ctype not in self.ctypes):
-                e_msg = ('Unsupported connection type(%s). Supported ones include: %s' % (ctype, self.ctypes))
+                e_msg = ('Unsupported connection type(%s). Supported ones '
+                         'include: %s' % (ctype, self.ctypes))
                 handle_exception(Exception(e_msg), request)
             devices = request.data.get('devices', None)
             if (ctype == 'team'):
-                #gather required input for team
+                # gather required input for team
                 team_profile = request.data.get('team_profile')
                 if (team_profile not in self.team_profiles):
-                    e_msg = ('Unsupported team profile(%s). Supported ones include: %s' % (team_profile, self.team_profiles))
+                    e_msg = ('Unsupported team profile(%s). Supported ones '
+                             'include: %s' %
+                             (team_profile, self.team_profiles))
                     handle_exception(Exception(e_msg), request)
                 self._validate_devices(devices, request)
                 network.new_team_connection(name, self.runners[team_profile],
@@ -247,11 +264,14 @@ class NetworkConnectionListView(rfc.GenericView, NetworkMixin):
             elif (ctype == 'bond'):
                 bond_profile = request.data.get('bond_profile')
                 if (bond_profile not in self.bond_profiles):
-                    e_msg = ('Unsupported bond profile(%s). Supported ones include: %s' % (bond_profile, self.bond_profiles))
+                    e_msg = ('Unsupported bond profile(%s). Supported ones '
+                             'include: %s'
+                             % (bond_profile, self.bond_profiles))
                     handle_exception(Exception(e_msg), request)
                 self._validate_devices(devices, request)
                 network.new_bond_connection(name, bond_profile, devices,
-                                            ipaddr, gateway, dns_servers, search_domains)
+                                            ipaddr, gateway, dns_servers,
+                                            search_domains)
 
             return Response()
 
@@ -281,6 +301,15 @@ class NetworkConnectionDetailView(rfc.GenericView, NetworkMixin):
         with self._handle_exception(request):
             nco = self._nco(request, id)
             method = request.data.get('method')
+            mtu = DEFAULT_MTU
+            try:
+                e_msg = ('mtu must be an integer in {} - {} range'.format(
+                    MIN_MTU, MAX_MTU))
+                mtu = int(request.data.get('mtu', DEFAULT_MTU))
+                if mtu < MIN_MTU or mtu > MAX_MTU:
+                    handle_exception(Exception(e_msg), request)
+            except ValueError:
+                handle_exception(Exception(e_msg), request)
             ipaddr = gateway = dns_servers = search_domains = None
             if (method == 'manual'):
                 ipaddr = request.data.get('ipaddr', None)
@@ -292,7 +321,8 @@ class NetworkConnectionDetailView(rfc.GenericView, NetworkMixin):
                 device = nco.networkdevice_set.first().name
                 self._delete_connection(nco)
                 network.new_ethernet_connection(nco.name, device, ipaddr,
-                                                gateway, dns_servers, search_domains)
+                                                gateway, dns_servers,
+                                                search_domains, mtu)
             elif (nco.ctype == 'team'):
                 team_profile = nco.team_profile
                 devices = []
@@ -302,7 +332,7 @@ class NetworkConnectionDetailView(rfc.GenericView, NetworkMixin):
                 self._delete_connection(nco)
                 network.new_team_connection(
                     nco.name, self.runners[team_profile], devices, ipaddr,
-                    gateway, dns_servers, search_domains)
+                    gateway, dns_servers, search_domains, mtu)
 
             return Response(NetworkConnectionSerializer(nco).data)
 
@@ -323,7 +353,7 @@ class NetworkConnectionDetailView(rfc.GenericView, NetworkMixin):
                 config = json.loads(so.config)
                 if (config['network_interface'] == nco.name):
                     restricted = True
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
             if (restricted):
                 e_msg = ('This connection(%s) is designated for '
@@ -336,12 +366,12 @@ class NetworkConnectionDetailView(rfc.GenericView, NetworkMixin):
 
     @transaction.atomic
     def post(self, request, id, switch):
-        #switch the connection up, down or reload.
+        # switch the connection up, down or reload.
         with self._handle_exception(request):
             nco = self._nco(request, id)
             if (switch == 'up' and nco.ctype in ('team', 'bond')):
-                #order_by('name') because in some cases member interfaces must
-                #be brought up in order. eg: active-backup.
+                # order_by('name') because in some cases member interfaces must
+                # be brought up in order. eg: active-backup.
                 for mnco in nco.networkconnection_set.all().order_by('name'):
                     logger.debug('upping %s %s' % (mnco.name, mnco.uuid))
                     network.toggle_connection(mnco.uuid, switch)
@@ -360,5 +390,6 @@ class NetworkStateView(rfc.GenericView, NetworkMixin):
         with self._handle_exception(request):
             self._refresh_connections()
             self._refresh_devices()
-            ns = NetworkConnectionSerializer(NetworkConnection.objects.all(), many=True)
+            ns = NetworkConnectionSerializer(
+                NetworkConnection.objects.all(), many=True)
             return Response(ns.data)

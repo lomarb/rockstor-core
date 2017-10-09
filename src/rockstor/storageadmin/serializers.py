@@ -19,8 +19,8 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 from rest_framework import serializers
 from storageadmin.models import (Disk, Pool, Share, Snapshot, NFSExport,
                                  SambaShare, IscsiTarget, Appliance,
-                                 SupportCase, DashboardConfig,
-                                 NetworkDevice, NetworkConnection, User, PoolScrub, Setup,
+                                 SupportCase, DashboardConfig, NetworkDevice,
+                                 NetworkConnection, User, PoolScrub, Setup,
                                  NFSExportGroup, SFTP, AdvancedNFSExport,
                                  OauthApp, NetatalkShare, Group, PoolBalance,
                                  SambaCustomConfig, TLSCertificate, RockOn,
@@ -38,6 +38,9 @@ class DiskInfoSerializer(serializers.ModelSerializer):
     power_state = serializers.CharField()
     hdparm_setting = serializers.CharField()
     apm_level = serializers.CharField()
+    temp_name = serializers.CharField()
+    target_name = serializers.CharField()
+
     class Meta:
         model = Disk
 
@@ -46,6 +49,8 @@ class PoolInfoSerializer(serializers.ModelSerializer):
     disks = DiskInfoSerializer(many=True, source='disk_set')
     free = serializers.IntegerField()
     reclaimable = serializers.IntegerField()
+    mount_status = serializers.CharField()
+    is_mounted = serializers.BooleanField()
 
     class Meta:
         model = Pool
@@ -76,8 +81,17 @@ class AdvancedNFSExportSerializer(serializers.ModelSerializer):
 
 
 class SUserSerializer(serializers.ModelSerializer):
+
+    ALLOWED_CHOICES = (
+        ('yes', 'yes'),
+        ('no', 'no'),
+        ('otp', 'otp')
+        )
     groupname = serializers.CharField()
     managed_user = serializers.BooleanField(default=True)
+    has_pincard = serializers.BooleanField(default=False)
+    pincard_allowed = serializers.ChoiceField(choices=ALLOWED_CHOICES,
+                                              default='no')
 
     class Meta:
         model = User
@@ -116,10 +130,19 @@ class IscsiSerializer(serializers.ModelSerializer):
         model = IscsiTarget
 
 
+class SharePoolSerializer(serializers.ModelSerializer):
+    size_gb = serializers.FloatField()
+
+    class Meta:
+        model = Share
+
+
 class ShareSerializer(serializers.ModelSerializer):
     snapshots = SnapshotSerializer(many=True, source='snapshot_set')
     pool = PoolInfoSerializer()
     nfs_exports = NFSExportSerializer(many=True, source='nfsexport_set')
+    mount_status = serializers.CharField()
+    is_mounted = serializers.BooleanField()
 
     class Meta:
         model = Share
@@ -151,6 +174,7 @@ class NetworkDeviceSerializer(serializers.ModelSerializer):
 
 class NetworkConnectionSerializer(serializers.ModelSerializer):
     ctype = serializers.CharField()
+    mtu = serializers.IntegerField()
     team_profile = serializers.CharField()
     bond_profile = serializers.CharField()
 
@@ -223,9 +247,11 @@ class RockOnCustomConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = DCustomConfig
 
+
 class RockOnEnvironmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = DContainerEnv
+
 
 class SMARTCapabilitySerializer(serializers.ModelSerializer):
     class Meta:

@@ -7,38 +7,54 @@
 </div>
 
 {{#if collectionNotEmpty}}
-  <table id="shares-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="List of shares">
+  <table id="shares-table" class="table table-bordered table-striped share-table data-table" width="100%" summary="List of shares">
     <thead>
       <tr>
         <th>Name</th>
         <th>Size</th>
-        <th>Pool</th>
-        <th>Usage</th>
-	      <th>Compression algorithm</th>
+        <th>Usage <i class="fa fa-info-circle" title="Current share content"></th>
+        <th>Btrfs Usage <i class="fa fa-info-circle" title="Current share content including snapshots"></th>
+        <th>Active mount options / Status</th>
+        <th>Pool (Active mount options / Status)</th>
+        <th>Compression <i class="fa fa-info-circle" title="Inherits pool setting if not specified on share"></th>
         <th>Actions</th>
       </tr>
     </thead>
     <tbody>
     {{#each shares}}
     <tr>
-        <td><a href="#shares/{{this.name}}"><i class="glyphicon glyphicon-folder-open"></i>  {{this.name}}</a></td>
+        <td><a href="#shares/{{this.id}}"><i class="glyphicon glyphicon-folder-open"></i>&nbsp;&nbsp;{{this.name}}</a></td>
         <td>{{humanize_size this.size}}</td>
-        <td>{{this.pool.name}}</td>
-        <td>{{humanize_size this.rusage}}
+        <td>{{humanize_size this.rusage}}</td>
+        <td>{{humanize_size this.pqgroup_rusage}} {{checkUsage this.size this.pqgroup_rusage}}</td>
         <td>
-        {{displayCompressionAlgo this.compression_algo this.name}}
+            {{#if this.is_mounted}}
+                {{this.mount_status}}
+            {{else}}
+                <strong><span style="color:red">{{this.mount_status}}</span></strong>
+            {{/if}}
         </td>
-        <td><a id="delete_share_{{this.name}}" data-name="{{this.name}}" data-action="delete"
-        data-pool="{{this.pool.name}}" data-size="{{humanize_size this.size}}" data-usage="{{humanize_size this.rusage}}" rel="tooltip" title="Delete share"><i class="glyphicon glyphicon-trash"></i></a></td>
+        <td><a href="#pools/{{this.pool.id}}">{{this.pool.name}}</a>
+            {{#if this.pool.is_mounted}}
+                ({{this.pool.mount_status}})
+            {{else}}
+                (<strong><span style="color:red">{{this.pool.mount_status}}</span></strong>)
+            {{/if}}
+        </td>
+        <td>
+        {{displayCompressionAlgo this.compression_algo this.id}}
+        </td>
+        <td>{{#if (isSystemShare this.id this.pool.role)}}
+                N/A
+            {{else}}
+                <a id="delete_share_{{this.name}}" data-id="{{this.id}}" data-name="{{this.name}}" data-action="delete"
+                data-pool="{{this.pool.name}}" data-size="{{humanize_size this.size}}" data-usage="{{humanize_size this.eusage}}" rel="tooltip" title="Delete share"><i class="glyphicon glyphicon-trash"></i></a>
+            {{/if}}
+		</td>
     </tr>
     {{/each}}
     </tbody>
   </table>
-
-  <div>
-    {{! call pagination related handlebar helper here..}}
-    {{pagination}}
-  </div>
   <a href="#add_share" id="add_share" class="btn btn-primary"><i class="glyphicon glyphicon-edit "></i> Create Share</a>
 {{ else }}
       <h4>No shares have been created</h4>
@@ -56,7 +72,7 @@
       <div class="modal-body">
         <div class="messages"></div>
         <p>Deleting <strong><em><span class="pass-share-name"></span></em></strong> will destroy all of it's data (<strong><span id="pass-share-usage"></span></strong>). Are you sure?</p>
-	<label><input type="checkbox" id="force-delete" name="force-delete"> Force Delete &nbsp;<i class="fa fa-info-circle fa-lg" 
+	<label><input type="checkbox" id="force-delete" name="force-delete"> Force Delete &nbsp;<i class="fa fa-info-circle fa-lg"
 	title="Forces the deletion of undetected Snapshots and then deletes the Share. Useful to forcefully delete the Rock-on root share, for example." rel="tooltip"></i></label>
       </div>
       <div class="modal-footer">

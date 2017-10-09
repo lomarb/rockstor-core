@@ -1,3 +1,7 @@
+# Rockstor
+
+[![Build Status](http://192.195.81.208:22082/buildStatus/icon?job=build-rockstor-core)](http://192.195.81.208:22082/job/build-rockstor-core)
+
 # What is Rockstor?
 
 Rockstor is a Network Attached Storage(NAS) solution based on Linux and B-Tree

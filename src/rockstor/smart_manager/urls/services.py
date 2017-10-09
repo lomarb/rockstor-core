@@ -17,17 +17,29 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
 from django.conf.urls import patterns, url
-from smart_manager.views import (NISServiceView, BaseServiceView,
-                                 SambaServiceView, NFSServiceView,
-                                 NTPServiceView, ActiveDirectoryServiceView,
-                                 LdapServiceView, SFTPServiceView,
-                                 ReplicationServiceView,
-                                 TaskSchedulerServiceView,
-                                 DataCollectorServiceView, ServiceMonitorView,
-                                 AFPServiceView, SNMPServiceView,
-                                 DockerServiceView, SMARTDServiceView,
-                                 NUTServiceView, ZTaskdServiceView,
-                                 BootstrapServiceView, RockstorServiceView)
+from smart_manager.views import (
+    AFPServiceView,
+    ActiveDirectoryServiceView,
+    BaseServiceView,
+    BootstrapServiceView,
+    DataCollectorServiceView,
+    DockerServiceView,
+    LdapServiceView,
+    NFSServiceView,
+    NISServiceView,
+    NTPServiceView,
+    NUTServiceView,
+    ReplicationServiceView,
+    RockstorServiceView,
+    SFTPServiceView,
+    SMARTDServiceView,
+    SNMPServiceView,
+    SambaServiceView,
+    ShellInABoxServiceView,
+    ServiceMonitorView,
+    TaskSchedulerServiceView,
+    ZTaskdServiceView,
+)
 
 command_regex = ('config|start|stop')
 
@@ -47,7 +59,8 @@ urlpatterns = patterns(
     url(r'^ntpd$', NTPServiceView.as_view()),
     url(r'^ntpd/(?P<command>%s)$' % command_regex, NTPServiceView.as_view()),
     url(r'^active-directory$', ActiveDirectoryServiceView.as_view()),
-    url(r'^active-directory/(?P<command>%s)$' % command_regex, ActiveDirectoryServiceView.as_view()),
+    url(r'^active-directory/(?P<command>%s)$'
+        % command_regex, ActiveDirectoryServiceView.as_view()),
     url(r'^ldap$', LdapServiceView.as_view()),
     url(r'^ldap/(?P<command>%s)$' % command_regex, LdapServiceView.as_view()),
     url(r'^sftp$', SFTPServiceView.as_view()),
@@ -75,9 +88,15 @@ urlpatterns = patterns(
     url(r'^nut$', NUTServiceView.as_view()),
     url(r'^nut/(?P<command>%s)$' % command_regex, NUTServiceView.as_view()),
     url(r'^ztask-daemon$', ZTaskdServiceView.as_view()),
-    url(r'^ztask-daemon/(?P<command>%s)$' % command_regex, ZTaskdServiceView.as_view()),
+    url(r'^ztask-daemon/(?P<command>%s)$' % command_regex,
+        ZTaskdServiceView.as_view()),
     url(r'^rockstor-bootstrap$', BootstrapServiceView.as_view()),
-    url(r'^rockstor-bootstrap/(?P<command>%s)$' % command_regex, BootstrapServiceView.as_view()),
+    url(r'^rockstor-bootstrap/(?P<command>%s)$' % command_regex,
+        BootstrapServiceView.as_view()),
+    url(r'^shellinaboxd$', ShellInABoxServiceView.as_view()),
+    url(r'^shellinaboxd/(?P<command>%s)$' % command_regex,
+        ShellInABoxServiceView.as_view()),
     url(r'^rockstor$', RockstorServiceView.as_view()),
-    url(r'^rockstor/(?P<command>%s)$' % command_regex, RockstorServiceView.as_view()),
+    url(r'^rockstor/(?P<command>%s)$' % command_regex,
+        RockstorServiceView.as_view()),
 )

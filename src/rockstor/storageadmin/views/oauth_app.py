@@ -23,7 +23,6 @@ from oauth2_provider.models import Application as OauthApplication
 from storageadmin.models import (OauthApp, User)
 from storageadmin.serializers import OauthAppSerializer
 import rest_framework_custom as rfc
-from storageadmin.exceptions import RockStorAPIException
 from storageadmin.util import handle_exception
 
 
@@ -45,8 +44,9 @@ class OauthAppView(rfc.GenericView):
             name = request.data.get('name')
             username = request.user.username
             if (OauthApp.objects.filter(name=name).exists()):
-                e_msg = ('application with name: %s already exists.' % name)
-                handle_exception(Exception(e_msg), request)
+                e_msg = ('application with name: %s already exists. Choose a '
+                         'different name.' % name)
+                handle_exception(Exception(e_msg), request, status_code=400)
 
             try:
                 user = User.objects.get(username=username)
@@ -74,14 +74,15 @@ class OauthAppView(rfc.GenericView):
                 handle_exception(Exception(e_msg), request)
 
             if (app.name == settings.OAUTH_INTERNAL_APP):
-                e_msg = ('application with id(%s) cannot be deleted because it is '
+                e_msg = ('application with id(%s) cannot be deleted because '
+                         'it is '
                          'used internally by Rockstor. If you really need to '
                          'delete it, login as root and use '
                          '%sbin/delete-api-key command. If you do delete it, '
                          'please create another one with the same name as it '
                          'is required by Rockstor internally.' %
                          (id, settings.ROOT_DIR))
-                handle_exception(Exception(e_msg), request)
+                handle_exception(Exception(e_msg), request, status_code=400)
 
             app.application.delete()
             app.delete()

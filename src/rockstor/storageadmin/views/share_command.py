@@ -18,28 +18,26 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 from rest_framework.response import Response
 from django.db import transaction
-from storageadmin.models import (Share, Snapshot, Disk, NFSExport, SambaShare)
+from storageadmin.models import (Share, Snapshot, NFSExport, SambaShare)
 from fs.btrfs import (update_quota, rollback_snap)
 from storageadmin.serializers import ShareSerializer
 from storageadmin.util import handle_exception
 import rest_framework_custom as rfc
 from clone_helpers import create_clone
-from django.conf import settings
-from system.osi import is_share_mounted
 from share import ShareMixin
+from django.core.exceptions import ObjectDoesNotExist
 import logging
 logger = logging.getLogger(__name__)
-from django.core.exceptions import ObjectDoesNotExist
 
 
 class ShareCommandView(ShareMixin, rfc.GenericView):
     serializer_class = ShareSerializer
 
-    def _validate_share(self, request, sname):
+    def _validate_share(self, request, sid):
         try:
-            return Share.objects.get(name=sname)
+            return Share.objects.get(id=sid)
         except ObjectDoesNotExist:
-            e_msg = ('Share(%s) does not exist' % sname)
+            e_msg = ('Share with id: {} does not exist'.format(sid))
             handle_exception(Exception(e_msg), request)
 
     def _validate_snapshot(self, request, share):
@@ -51,10 +49,10 @@ class ShareCommandView(ShareMixin, rfc.GenericView):
                      (snap_name, share.name))
             handle_exception(Exception(e_msg), request)
 
-    @transaction.commit_on_success
-    def post(self, request, sname, command):
+    @transaction.atomic
+    def post(self, request, sid, command):
         with self._handle_exception(request):
-            share = self._validate_share(request, sname)
+            share = self._validate_share(request, sid)
 
             if (command == 'clone'):
                 new_name = request.data.get('name', '')
@@ -66,12 +64,12 @@ class ShareCommandView(ShareMixin, rfc.GenericView):
                 if (NFSExport.objects.filter(share=share).exists()):
                     e_msg = ('Share(%s) cannot be rolled back as it is '
                              'exported via nfs. Delete nfs exports and '
-                             'try again' % sname)
+                             'try again' % share.name)
                     handle_exception(Exception(e_msg), request)
 
                 if (SambaShare.objects.filter(share=share).exists()):
                     e_msg = ('Share(%s) cannot be rolled back as it is shared'
-                             ' via Samba. Unshare and try again' % sname)
+                             ' via Samba. Unshare and try again' % share.name)
                     handle_exception(Exception(e_msg), request)
 
                 rollback_snap(snap.real_name, share.name, share.subvol_name,

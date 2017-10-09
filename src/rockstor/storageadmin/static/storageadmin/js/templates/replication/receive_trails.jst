@@ -26,7 +26,7 @@
   <div class="row">
     <div class="col-md-12">
       <div class="messages"></div>
-      <table id="receive-trails-table" class="table table-condensed table-bordered table-hover table-striped share-table tablesorter" summary="Replica trails">
+      <table id="receive-trails-table" class="table table-bordered table-striped share-table data-table" width="100%" summary="Replica trails">
         <thead>
           <tr>
             <th scope="col" abbr="ID">ID</th>
@@ -58,12 +58,11 @@
                     {{getDuration this.end_ts receive_pending}}
                     {{/if}}
                 </td>
-                <td>{{this.kb_received}} KB at {{getRate this.end_ts this.receive_pending this.kb_received}} KB/sec.</td>
+                <td>{{humanReadableSize this.kb_received}} at {{getRate this.end_ts this.receive_pending this.kb_received}} /sec.</td>
             </tr>
           {{/each}}
         </tbody>
       </table>
-      <div>{{pagination}}</div>
     </div>
   </div>
 {{/if}}

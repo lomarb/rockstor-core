@@ -23,8 +23,8 @@ from django.db import transaction
 from base_service import BaseServiceDetailView
 from smart_manager.models import Service
 from django.conf import settings
-from storageadmin.models import (Share, Disk)
-from fs.btrfs import (mount_share, is_share_mounted)
+from storageadmin.models import Share
+from fs.btrfs import mount_share
 import re
 import shutil
 
@@ -38,7 +38,7 @@ class DockerServiceView(BaseServiceDetailView):
     def _validate_root(self, request, root):
         try:
             return Share.objects.get(name=root)
-        except Exception, e:
+        except Exception as e:
             logger.exception(e)
             e_msg = ('Share(%s) does not exist' % root)
             handle_exception(Exception(e_msg), request)
@@ -63,7 +63,7 @@ class DockerServiceView(BaseServiceDetailView):
 
             share = self._validate_root(request, config['root_share'])
             mnt_pt = ('%s%s' % (settings.MNT_PT, share.name))
-            if (not is_share_mounted(share.name)):
+            if not share.is_mounted:
                 mount_share(share, mnt_pt)
 
             inf = ('%s/docker.service' % (settings.CONFROOT))

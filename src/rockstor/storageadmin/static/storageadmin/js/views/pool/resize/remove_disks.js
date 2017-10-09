@@ -25,58 +25,102 @@
  */
 
 PoolRemoveDisks = RockstorWizardPage.extend({
-	events:{
-		"click #checkAll": "selectAllCheckboxes",
-		'click [class="diskname"]': 'clickCheckbox',
-	},
+    events: {
+        'click #checkAll': 'selectAllCheckboxes',
+        'click [class="diskname"]': 'clickCheckbox'
+    },
 
-	initialize: function() {
-		this.disks = new DiskCollection();
-		this.disks.setPageSize(100);
-		this.template = window.JST.pool_resize_remove_disks;
-		this.disks_template = window.JST.common_disks_table;
-		RockstorWizardPage.prototype.initialize.apply(this, arguments);
-		this.disks.on('reset', this.renderDisks, this);
-	},
+    initialize: function() {
+        this.disks = new DiskCollection();
+        this.disks.setPageSize(100);
+        this.template = window.JST.pool_resize_remove_disks;
+        this.disks_template = window.JST.common_disks_table;
+        RockstorWizardPage.prototype.initialize.apply(this, arguments);
+        this.disks.on('reset', this.renderDisks, this);
+        this.initHandlebarHelpers();
+    },
 
-	render: function() {
-		RockstorWizardPage.prototype.render.apply(this, arguments);
-		this.disks.fetch();
-		return this;
-	},
+    render: function() {
+        RockstorWizardPage.prototype.render.apply(this, arguments);
+        this.disks.fetch();
+        return this;
+    },
 
-	renderDisks: function() {
-		var disks = this.disks.filter(function(disk) {
-			return disk.get('pool_name') == this.model.get('pool').get('name');
-		}, this);
-		//convert the array elements which are backbone models/collections to JSON object
-		for(var i = 0; i < disks.length; i++){
-			disks[i] = disks[i].toJSON();
-		}
-		this.$('#ph-disks-table').html(this.disks_template({disks: disks}));
-	},
+    renderDisks: function() {
+        var disks = this.disks.filter(function(disk) {
+            return disk.get('pool_name') == this.model.get('pool').get('name');
+        }, this);
+        //convert the array elements which are backbone models/collections to JSON object
+        for (var i = 0; i < disks.length; i++) {
+            disks[i] = disks[i].toJSON();
+        }
+        this.$('#ph-disks-table').html(this.disks_template({
+            disks: disks
+        }));
+    },
 
-	selectAllCheckboxes: function(event){
-		$("#checkAll").change(function () {
-			$("input:checkbox").prop('checked',  $(this).prop("checked"));
-			$("input:checkbox").closest("tr").toggleClass("row-highlight", this.checked);
-		});
-	},
+    selectAllCheckboxes: function(event) {
+        $('#checkAll').change(function() {
+            $('input:checkbox').prop('checked', $(this).prop('checked'));
+            $('input:checkbox').closest('tr').toggleClass('row-highlight', this.checked);
+        });
+    },
 
-	clickCheckbox: function (event) {
-		$("input:checkbox").change(function() {
-			$(this).closest("tr").toggleClass("row-highlight", this.checked);
-		});
-	},
+    clickCheckbox: function(event) {
+        $('input:checkbox').change(function() {
+            $(this).closest('tr').toggleClass('row-highlight', this.checked);
+        });
+    },
 
-	save: function() {
-		var _this = this;
-		var checked = this.$(".diskname:checked").length;
-		var diskNames = [];
-		this.$(".diskname:checked").each(function(i) {
-			diskNames.push($(this).val());
-		});
-		this.model.set('diskNames', diskNames);
-		return $.Deferred().resolve();
-	},
+    save: function() {
+        var _this = this;
+        var checked = this.$('.diskname:checked').length;
+        var diskNames = [];
+        this.$('.diskname:checked').each(function(i) {
+            diskNames.push($(this).val());
+        });
+        this.model.set('diskNames', diskNames);
+        return $.Deferred().resolve();
+    },
+
+    initHandlebarHelpers: function() {
+
+        asJSON = function (role) {
+            // Simple wrapper to test for not null and JSON compatibility,
+            // returns the json object if both tests pass, else returns false.
+            if (role == null) { // db default
+                return false;
+            }
+            // try json conversion and return false if it fails
+            // @todo not sure if this is redundant?
+            try {
+                return JSON.parse(role);
+            } catch (e) {
+                return false;
+            }
+        };
+
+        // Identify Open LUKS container by return of true / false.
+        // Works by examining the Disk.role field. Based on sister handlebars
+        // helper 'isRootDevice'
+        Handlebars.registerHelper('isOpenLuks', function (role) {
+            var roleAsJson = asJSON(role);
+            if (roleAsJson == false) return false;
+            // We have a json string ie non legacy role info so we can examine:
+            if (roleAsJson.hasOwnProperty('openLUKS')) {
+                // Once a LUKS container is open it has a type of crypt
+                // and we attribute it the role of 'openLUKS' as a result.
+                return true;
+            }
+            // In all other cases return false.
+            return false;
+        });
+
+        Handlebars.registerHelper('mathHelper', function(value, options) {
+            return parseInt(value) + 1;
+        });
+        Handlebars.registerHelper('humanReadableSize', function(diskSize) {
+            return humanize.filesize(diskSize * 1024);
+        });
+    }
 });

@@ -19,7 +19,6 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 import re
 from django.conf import settings
 from osi import run_command
-from exceptions import CommandException
 import shutil
 from tempfile import mkstemp
 import os
@@ -33,6 +32,7 @@ SYSTEMCTL_BIN = '/usr/bin/systemctl'
 SUPERCTL_BIN = ('%s/bin/supervisorctl' % settings.ROOT_DIR)
 SUPERVISORD_CONF = ('%s/etc/supervisord.conf' % settings.ROOT_DIR)
 NET = '/usr/bin/net'
+WBINFO = '/usr/bin/wbinfo'
 AFP_CONFIG = '/etc/netatalk/afp.conf'
 
 
@@ -48,7 +48,8 @@ def init_service_op(service_name, command, throw=True):
     """
     supported_services = ('nfs', 'smb', 'sshd', 'ypbind', 'rpcbind', 'ntpd',
                           'nslcd', 'netatalk', 'snmpd', 'docker', 'smartd',
-                          'nut-server', 'rockstor-bootstrap', 'rockstor')
+                          'shellinaboxd', 'nut-server', 'rockstor-bootstrap',
+                          'rockstor', 'systemd-shutdownd')
     if (service_name not in supported_services):
         raise Exception('unknown service: %s' % service_name)
 
@@ -140,8 +141,8 @@ def service_status(service_name, config=None):
                         None):
                     return out, err, rc
             # -1 not appropriate as inconsistent with bash return codes
-            # Returning 1 as Catchall for general errors.
-            # the calling system interprets -1 as enabled, 1 works for disabled.
+            # Returning 1 as Catchall for general errors.  the calling system
+            # interprets -1 as enabled, 1 works for disabled.
             return out, err, 1
     elif (service_name in ('replication', 'data-collector', 'ztask-daemon')):
         return superctl(service_name, 'status')
@@ -159,9 +160,23 @@ def service_status(service_name, config=None):
                            throw=False)
     elif (service_name == 'active-directory'):
         if (config is not None):
-            cmd = [NET, 'ads', 'status', '-U', config.get('username')]
-            return run_command(cmd, input=('%s\n' % config.get('password')),
-                               throw=False)
+            # 2 steps Active Directory status check
+            # First checks secret via rpc callable
+            # Second checks via auth for admin username
+            # If both give us 0 rc Active Directory is running
+            wbinfo_trust_cmd = [WBINFO, '-t', '--domain', config.get('domain')]
+            wbinfo_auth_credentials = '{}@{}%{}'.format(
+                config.get('username'), config.get('domain'),
+                config.get('password'))
+            wbinfo_auth_cmd = [WBINFO, '-a', wbinfo_auth_credentials,
+                               '--domain', config.get('domain')]
+            wbinfo_trust = run_command(wbinfo_trust_cmd, throw=False)
+            wbinfo_auth = run_command(wbinfo_auth_cmd, throw=False)
+            active_directory_rc = 1
+            if (wbinfo_trust[2] == 0 and wbinfo_auth[2] == 0):
+                active_directory_rc = 0
+
+            return '', '', active_directory_rc
         # bootstrap switch subsystem interprets -1 as ON so returning 1 instead
         return '', '', 1
 
@@ -194,7 +209,7 @@ def toggle_auth_service(service, command, config=None):
 def rockstor_afp_config(fo, afpl):
     fo.write(';####BEGIN: Rockstor AFP CONFIG####\n')
     for c in afpl:
-        vol_size = int(c.vol_size() / 1024)
+        vol_size = int(c.vol_size / 1024)
         fo.write('[%s]\n' % c.description)
         fo.write('  path = %s\n' % c.path)
         fo.write('  time machine = %s\n' % c.time_machine)
@@ -206,18 +221,19 @@ def refresh_afp_config(afpl):
     fo, npath = mkstemp()
     with open(AFP_CONFIG) as afo, open(npath, 'w') as tfo:
         rockstor_section = False
+        tfo.write('; Netatalk 3.x configuration file\n\n')
+        tfo.write('[Global]\n')
+        tfo.write('mimic model = RackMac\n\n')
         for line in afo.readlines():
             if (re.match(';####BEGIN: Rockstor AFP CONFIG####', line)
                     is not None):
                 rockstor_section = True
                 rockstor_afp_config(tfo, afpl)
                 break
-            else:
-                tfo.write(line)
         if (rockstor_section is False):
             rockstor_afp_config(tfo, afpl)
     shutil.move(npath, AFP_CONFIG)
-    os.chmod(AFP_CONFIG, 0644)
+    os.chmod(AFP_CONFIG, 644)
 
 
 def update_nginx(ip, port):
@@ -225,17 +241,23 @@ def update_nginx(ip, port):
     conf = '%s/etc/nginx/nginx.conf' % settings.ROOT_DIR
     fo, npath = mkstemp()
     with open(conf) as ifo, open(npath, 'w') as tfo:
-        for line in ifo.readlines():
-            if (re.search('listen.*80 default_server', line) is not None):
-                substr = 'listen 80'
-                if (ip is not None):
-                    substr = 'listen %s:80' % ip
-                line = re.sub(r'listen.*80', substr, line)
-            elif (re.search('listen.*default_server', line) is not None):
+        http_server = False
+        lines = ifo.readlines()
+        for i in range(len(lines)):
+            if ((re.search('server {', lines[i]) is not None and
+                 re.search('listen.*80 default_server', lines[i+1]) is not
+                 None)):
+                # found legacy http server section. don't rewrite it.
+                http_server = True
+            if ((not http_server and
+                 re.search('listen.*default_server', lines[i]) is not None)):
                 substr = 'listen %d default_server' % port
                 if (ip is not None):
-                    substr = 'listen %s:%s default_server' % (ip, port)
-                line = re.sub(r'listen.* default_server', substr, line)
-            tfo.write(line)
+                    substr = 'listen %s:%d default_server' % (ip, port)
+                lines[i] = re.sub(r'listen.* default_server', substr, lines[i])
+            if (not http_server):
+                tfo.write(lines[i])
+            if (http_server is True and lines[i].strip() == '}'):
+                http_server = False
     move(npath, conf)
     superctl('nginx', 'restart')

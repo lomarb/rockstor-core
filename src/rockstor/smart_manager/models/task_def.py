@@ -1,5 +1,5 @@
 """
-Copyright (c) 2012-2013 RockStor, Inc. <http://rockstor.com>
+Copyright (c) 2012-2017 RockStor, Inc. <http://rockstor.com>
 This file is part of RockStor.
 
 RockStor is free software; you can redistribute it and/or modify
@@ -24,13 +24,18 @@ class TaskDefinition(models.Model):
     TASK_TYPES = [
         ('scrub',) * 2,
         ('snapshot',) * 2,
+        ('reboot',) * 2,
+        ('shutdown',) * 2,
+        ('suspend',) * 2,
+        ('custom',) * 2
         ]
     task_type = models.CharField(max_length=100, choices=TASK_TYPES)
     json_meta = models.CharField(max_length=8192)
     enabled = models.BooleanField(default=True)
     crontab = models.CharField(max_length=64, null=True)
     crontabwindow = models.CharField(max_length=64, null=True)
-    #Added crontabwindow field to storage exec window value - null to true for backward compatibility with old scheduled tasks
+    # Added crontabwindow field to storage exec window value - null to true for
+    # backward compatibility with old scheduled tasks
 
     class Meta:
         app_label = 'smart_manager'

@@ -27,93 +27,137 @@
 
 PoolAddDisks = RockstorWizardPage.extend({
 
-	events:{
-		"click #checkAll": "selectAllCheckboxes",
-		'click [class="diskname"]': 'clickCheckbox',
-	},
+    events: {
+        'click #checkAll': 'selectAllCheckboxes',
+        'click [class="diskname"]': 'clickCheckbox'
+    },
 
-	initialize: function() {
-		this.disks = new DiskCollection();
-		this.disks.setPageSize(100);
-		this.template = window.JST.pool_resize_add_disks;
-		this.disks_template = window.JST.common_disks_table;
-		RockstorWizardPage.prototype.initialize.apply(this, arguments);
-		this.disks.on('reset', this.renderDisks, this);
-		this.initHandlebarHelpers();
-	},
+    initialize: function () {
+        this.disks = new DiskCollection();
+        this.disks.setPageSize(100);
+        this.template = window.JST.pool_resize_add_disks;
+        this.disks_template = window.JST.common_disks_table;
+        RockstorWizardPage.prototype.initialize.apply(this, arguments);
+        this.disks.on('reset', this.renderDisks, this);
+        this.initHandlebarHelpers();
+    },
 
-	render: function() {
-		RockstorWizardPage.prototype.render.apply(this, arguments);
-		this.disks.fetch();
-		return this;
-	},
+    render: function () {
+        RockstorWizardPage.prototype.render.apply(this, arguments);
+        $(this.el).html(this.template({
+            model: this.model.toJSON(),
+            raidLevel: this.model.get('pool').get('raid')
+        }));
+        this.disks.fetch();
+        return this;
+    },
 
-	renderDisks: function() {
-		var disks = this.disks.filter(function(disk) {
-			return disk.available();
-		}, this);
-		//convert the array elements which are backbone models/collections to JSON object
-		for(var i = 0; i < disks.length; i++){
-			disks[i] = disks[i].toJSON();
-		}
-		console.log("the model object is: ", this.model.toJSON());
-		this.$('#ph-disks-table').html(this.disks_template({disks: disks}));
-	},
+    renderDisks: function () {
+        var disks = this.disks.filter(function (disk) {
+            return disk.available() && disk.isSerialUsable() && disk.isRoleUsable();
+        }, this);
+        //convert the array elements which are backbone models/collections to JSON object
+        for (var i = 0; i < disks.length; i++) {
+            disks[i] = disks[i].toJSON();
+        }
+        this.$('#ph-disks-table').html(this.disks_template({disks: disks}));
+        this.$('#add-disks-form').validate({
+            rules: {
+                'raid-level': {
+                    required: true
+                }
+            },
+            messages: {
+                'raid-level': 'Please select a RAID level'
+            }
+        });
+    },
 
-	selectAllCheckboxes: function(event){
-		$("#checkAll").change(function () {
-			$("input:checkbox").prop('checked',  $(this).prop("checked"));
-			$("input:checkbox").closest("tr").toggleClass("row-highlight", this.checked);
-		});
-	},
+    selectAllCheckboxes: function (event) {
+        $('#checkAll').change(function () {
+            $('input:checkbox').prop('checked', $(this).prop('checked'));
+            $('input:checkbox').closest('tr').toggleClass('row-highlight', this.checked);
+        });
+    },
 
-	clickCheckbox: function (event) {
-		$("input:checkbox").change(function() {
-			$(this).closest("tr").toggleClass("row-highlight", this.checked);
-		});
-	},
+    clickCheckbox: function (event) {
+        $('input:checkbox').change(function () {
+            $(this).closest('tr').toggleClass('row-highlight', this.checked);
+        });
+    },
 
-	save: function() {
-		var _this = this;
-		var checked = this.$(".diskname:checked").length;
-		var diskNames = [];
-		this.$(".diskname:checked").each(function(i) {
-			diskNames.push($(this).val());
-		});
-		this.model.set('diskNames', diskNames);
-		if (this.model.get('raidChange')) {
-			this.model.set('raidLevel', this.$('#raid-level').val());
-		}
-		return $.Deferred().resolve();
-	},
+    /* valid() can be applied on any form element but validate() has to applied on the form.
+     * valid calls validate function internally
+     */
+    save: function () {
+        var valid = this.$('#add-disks-form').valid();
+        if(!valid){
+            return $.Deferred().reject();
+        }
+        var _this = this;
+        var checked = this.$('.diskname:checked').length;
+        var diskNames = [];
+        this.$('.diskname:checked').each(function (i) {
+            diskNames.push($(this).val());
+        });
+        this.model.set('diskNames', diskNames);
+        if (this.model.get('raidChange')) {
+            this.model.set('raidLevel', this.$('#raid-level').val());
+        }
+        return $.Deferred().resolve();
+    },
 
-	initHandlebarHelpers: function(){
-		Handlebars.registerHelper('display_raidLevel_dropdown', function(){
-			var html = '',
-			_this = this;
-			if (this.model.get('raidChange')) { 
-				html += '<h4>Select a new raid level</h4>';
-				var levels = ['single', 'raid0', 'raid1', 'raid10', 'raid5', 'raid6']; 
-				html += '<div class="">';
-				html += '<select id="raid-level" name="raid-level" title="Select a new raid level for the pool">';
-				html += '<option value="">Select a new raid level</option>';
-				_.each(levels, function(level) { 
-					if (_this.model.get('pool').get('raid') != level) { 
-						html += '<option value="' + level + '">' + level +'</option>';
-					}
-				});
-				html += '</select>';
-				html += '</div>';
-			} 
-			return new Handlebars.SafeString(html);
-		});
+    initHandlebarHelpers: function () {
 
-		Handlebars.registerHelper("mathHelper", function(value, options){
-			return parseInt(value) + 1;
-		});
+        asJSON = function (role) {
+            // Simple wrapper to test for not null and JSON compatibility,
+            // returns the json object if both tests pass, else returns false.
+            if (role == null) { // db default
+                return false;
+            }
+            // try json conversion and return false if it fails
+            // @todo not sure if this is redundant?
+            try {
+                return JSON.parse(role);
+            } catch (e) {
+                return false;
+            }
+        };
 
-		Handlebars.registerHelper('humanReadableSize', function(diskSize){
-			return humanize.filesize(diskSize * 1024);
-		});
-	}
+        // Identify Open LUKS container by return of true / false.
+        // Works by examining the Disk.role field. Based on sister handlebars
+        // helper 'isRootDevice'
+        Handlebars.registerHelper('isOpenLuks', function (role) {
+            var roleAsJson = asJSON(role);
+            if (roleAsJson == false) return false;
+            // We have a json string ie non legacy role info so we can examine:
+            if (roleAsJson.hasOwnProperty('openLUKS')) {
+                // Once a LUKS container is open it has a type of crypt
+                // and we attribute it the role of 'openLUKS' as a result.
+                return true;
+            }
+            // In all other cases return false.
+            return false;
+        });
+
+        Handlebars.registerHelper('display_raid_levels', function(){
+            var html = '';
+            var _this = this;
+            var levels = ['raid0', 'raid1', 'raid10', 'raid5', 'raid6'];
+            _.each(levels, function(level) {
+                if (_this.raidLevel != level) {
+                    html += '<option value="' + level + '">' + level + '</option>';
+                }
+            });
+            return new Handlebars.SafeString(html);
+        });
+
+        Handlebars.registerHelper('mathHelper', function (value, options) {
+            return parseInt(value) + 1;
+        });
+
+        Handlebars.registerHelper('humanReadableSize', function (diskSize) {
+            return humanize.filesize(diskSize * 1024);
+        });
+    }
 });

@@ -3,7 +3,7 @@
  * @licstart  The following is the entire license notice for the
  * JavaScript code in this page.
  *
- * Copyright (c) 2012-2013 RockStor, Inc. <http://rockstor.com>
+ * Copyright (c) 2012-2017 RockStor, Inc. <http://rockstor.com>
  * This file is part of RockStor.
  *
  * RockStor is free software; you can redistribute it and/or modify
@@ -29,150 +29,228 @@
  */
 
 PoolsView = RockstorLayoutView.extend({
-	events: {
-		"click a[data-action=delete]": "deletePool",
-		'click #js-cancel': 'cancel',
-		'click #js-confirm-pool-delete': 'confirmPoolDelete'
-	},
 
-	initialize: function() {
+    events: {
+        'click a[data-action=delete]': 'deletePool',
+        'click #js-cancel': 'cancel',
+        'click #js-confirm-pool-delete': 'confirmPoolDelete'
+    },
 
-		this.constructor.__super__.initialize.apply(this, arguments);
-		this.pools_table_template = window.JST.pool_pools_table;
-		this.collection = new PoolCollection();
-		this.disks = new DiskCollection();
-		this.disks.pageSize = RockStorGlobals.maxPageSize;
-		this.dependencies.push(this.disks);
-		this.dependencies.push(this.collection);
-		this.collection.on("reset", this.renderPools, this);
-		this.initHandlebarHelpers();
+    initialize: function() {
+        this.constructor.__super__.initialize.apply(this, arguments);
+        this.pools_table_template = window.JST.pool_pools_table;
+        this.collection = new PoolCollection();
+        this.disks = new DiskCollection();
+        this.disks.pageSize = RockStorGlobals.maxPageSize;
+        this.dependencies.push(this.disks);
+        this.dependencies.push(this.collection);
+        this.collection.on('reset', this.renderPools, this);
+        this.initHandlebarHelpers();
+    },
 
-	},
+    render: function() {
+        this.fetch(this.renderPools,this);
+        return this;
+    },
 
-	render: function() {
-		this.fetch(this.renderPools,this);
-		return this;
-	},
+    renderPools: function() {
+        var _this = this;
+        if (this.$('[rel=tooltip]')) {
+            this.$('[rel=tooltip]').tooltip('hide');
+        }
 
-	renderPools: function() {
-		var _this = this;
-		if (this.$('[rel=tooltip]')) {
-			this.$('[rel=tooltip]').tooltip('hide');
-		}
+        var freedisks = this.disks.filter(function(disk) {
+            return (disk.get('pool') == null) && !(disk.get('offline')) &&
+            !(disk.get('parted'));
+        });
 
-		var freedisks = this.disks.filter(function(disk) {
-			return (disk.get('pool') == null) && !(disk.get('offline')) &&
-			!(disk.get('parted'));
-		});
+        var disksAvailable = false;
+        if(_.size(freedisks) > 0){
+            disksAvailable = true;
+        }
 
-		var disksAvailable = false;
-		if(_.size(freedisks) > 0){
-			disksAvailable = true;
-		}
+        $(this.el).html(this.pools_table_template({
+            collection: this.collection,
+            poolCollection: this.collection.toJSON(),
+            collectionNotEmpty: !this.collection.isEmpty(),
+            disksAvailable: disksAvailable
+        }));
 
-		$(this.el).html(this.pools_table_template({
-			collection: this.collection,
-			poolCollection: this.collection.toJSON(),
-			collectionNotEmpty: !this.collection.isEmpty(),
-			disksAvailable: disksAvailable
-		}));
+        this.$('[rel=tooltip]').tooltip({placement: 'bottom'});
 
-		this.$("#pools-table").tablesorter({
-			headers: {
-				// assign the fifth column (we start counting zero)
-				5: {
-					// disable it by setting the property sorter to false
-					sorter: false
-				}
-			}
-		});
-		this.$('[rel=tooltip]').tooltip({placement: 'bottom'});
+        var customs = {
+            columnDefs: [
+                { type: 'file-size', targets: 1 },
+                { type: 'file-size', targets: 2 }
+            ]
+        };
 
-		return this;
-	},
+        this.renderDataTables(customs);
 
-	deletePool: function(event) {
-		var _this = this;
-		var button = $(event.currentTarget);
-		if (buttonDisabled(button)) return false;
-		poolName = button.attr('data-name');
-		// set share name in confirm dialog
-		_this.$('#pass-pool-name').html(poolName);
-		//show the dialog
-		_this.$('#delete-pool-modal').modal();
-		return false;
-	},
+        //X-editable Inline Edit.
+        $.fn.editable.defaults.mode = 'inline';
+        $('.status').editable({
+            source: [
+                     {value: 'no', text: 'no'},
+                     {value: 'zlib', text: 'zlib'},
+                     {value: 'lzo', text: 'lzo'}
+            ],
+            success: function(response, newCompr){
+                //use $(this) to dynamically get pool name from select dropdown.
+                var pid = $(this).data('pid');
+                var mntOptn = $(this).data('mntoptn');
+                $.ajax({
+                    url: '/api/pools/' + pid + '/remount',
+                    type: 'PUT',
+                    dataType: 'json',
+                    data: {
+                        'compression': newCompr,
+                        'mnt_options': mntOptn
+                    }
+                });
+            }
+        });
 
-	//modal confirm button handler
-	confirmPoolDelete: function(event) {
-		var _this = this;
-		var button = $(event.currentTarget);
-		if (buttonDisabled(button)) return false;
-		disableButton(button);
-		$.ajax({
-			url: "/api/pools/" + poolName,
-			type: "DELETE",
-			dataType: "json",
-			success: function() {
-				_this.collection.fetch({reset: true});
-				enableButton(button);
-				_this.$('#delete-pool-modal').modal('hide');
-				$('.modal-backdrop').remove();
-				app_router.navigate('pools', {trigger: true})
-			},
-			error: function(xhr, status, error) {
-				enableButton(button);
-			}
-		});
-	},
+        $('.mntOptns').editable({
+            title: 'Edit Mount Options',
+            emptytext: 'None',
+            success: function(response, newMntOptns){
+                var pid = $(this).data('pid');
+                var compr = $(this).data('comp');
+                $.ajax({
+                    url: '/api/pools/' + pid + '/remount',
+                    type: 'PUT',
+                    dataType: 'json',
+                    data: {
+                        'compression': compr,
+                        'mnt_options': newMntOptns
+                    }
+                });
+            }
+        });
+        return this;
+    },
 
-	cancel: function(event) {
-		if (event) event.preventDefault();
-		app_router.navigate('pools', {trigger: true})
-	},
+    displayPoolInformation: function (pid) {
+        // set share name in confirm dialog
+        // this.$('#pass-pool-name').html(poolName);
+        //show the dialog
+        this.$('#delete-pool-modal-' + pid).modal();
+        return false;
+    },
 
-	initHandlebarHelpers: function(){
-		Handlebars.registerHelper('humanReadableSize', function(type, size, poolReclaim, poolFree) {
-			var html = '';
-			if(type == "size"){
-				html += humanize.filesize(size * 1024);
-			}else if(type == "usage"){
-				html += humanize.filesize((size - poolReclaim - poolFree) * 1024);
-			}else if (type == "usagePercent"){
-				html += (((size - poolReclaim - poolFree) / size) * 100).toFixed(2);
-			}
-			return new Handlebars.SafeString(html);
+    deletePool: function(event) {
+        var _this = this;
+        var button = $(event.currentTarget);
+        var $poolShares = $('#pool-shares');
+        // Remove share names upon reopening
+        $poolShares.html('');
+        if (buttonDisabled(button)) return false;
+        var pid = button.attr('data-id');
+        var poolShares = new PoolShareCollection([], {pid: pid});
+        poolShares.fetch({
+            success: function (data) {
+                var shares = poolShares.models[0].attributes.results;
+                // Only display shares if they exist
+                if (!_.isUndefined(shares)) {
+                    _.each(shares, function(share) {
+                        $poolShares.append('<li>' + share.name +  ' (' + share.size_gb + ' GB)</li>');
+                    });
+                    _this.displayPoolInformation(pid);
+                }
+            },
+            error: function (err) {
+                // Display anyways
+                _this.displayPoolInformation(pid);
+            }
+        });
+    },
 
-		});
+    confirmPoolDelete: function(event) {
+        var _this = this;
+        var button = $(event.currentTarget);
+        if (buttonDisabled(button)) return false;
+        disableButton(button);
+        var pid = button.attr('data-id');
+        var url = '/api/pools/' + pid + '/force';
+        $.ajax({
+            url: url,
+            type: 'DELETE',
+            dataType: 'json',
+            success: function() {
+                enableButton(button);
+                _this.$('#delete-pool-modal-' + pid).modal('hide');
+                $('.modal-backdrop').remove();
+                _this.render();
+            },
+            error: function(xhr, status, error) {
+                enableButton(button);
+            }
+        });
+    },
 
-		Handlebars.registerHelper('checkCompressionStatus', function(poolCompression, opts) {
-			if (poolCompression == 'no' || _.isNull(poolCompression) || _.isUndefined(poolCompression) ) {
-				return opts.fn(this);
-			}
-			return opts.inverse(this);
-		});
+    cancel: function(event) {
+        if (event) event.preventDefault();
+        app_router.navigate('pools', {trigger: true});
+    },
 
-		Handlebars.registerHelper('getDisks', function(disks) {
-			var dNames =  _.reduce(disks,
-					function(s, disk, i, list) {
-				if (i < (list.length-1)){
-					return s + disk.name + ',';
-				} else {
-					return s + disk.name;
-				}
-			}, '');
-			return dNames;
-		});
+    initHandlebarHelpers: function(){
 
-		Handlebars.registerHelper('isRoot', function(role) {
-			if (role == 'root') {
-				return true;
-			}
-			return false;
-		});
-	}
+        asJSON = function (role) {
+            // Simple wrapper to test for not null and JSON compatibility,
+            // returns the json object if both tests pass, else returns false.
+            if (role == null) { // db default
+                return false;
+            }
+            // try json conversion and return false if it fails
+            // @todo not sure if this is redundant?
+            try {
+                return JSON.parse(role);
+            } catch (e) {
+                return false;
+            }
+        };
+
+        // Identify Open LUKS container by return of true / false.
+        // Works by examining the Disk.role field.
+        Handlebars.registerHelper('isOpenLuks', function (role) {
+            var roleAsJson = asJSON(role);
+            if (roleAsJson == false) return false;
+            // We have a json string ie non legacy role info so we can examine:
+            if (roleAsJson.hasOwnProperty('openLUKS')) {
+                // Once a LUKS container is open it has a type of crypt
+                // and we attribute it the role of 'openLUKS' as a result.
+                return true;
+            }
+            // In all other cases return false.
+            return false;
+        });
+
+        Handlebars.registerHelper('humanReadableSize', function(type, size, poolReclaim, poolFree) {
+            var html = '';
+            if(type == 'size'){
+                html += humanize.filesize(size * 1024);
+            }else if(type == 'usage'){
+                html += humanize.filesize((size - poolReclaim - poolFree) * 1024);
+            }else if (type == 'usagePercent'){
+                html += (((size - poolReclaim - poolFree) / size) * 100).toFixed(2);
+            }
+            return new Handlebars.SafeString(html);
+
+        });
+
+        Handlebars.registerHelper('checkCompressionStatus', function(poolCompression, opts) {
+            if (poolCompression == 'no' || _.isNull(poolCompression) || _.isUndefined(poolCompression) ) {
+                return opts.fn(this);
+            }
+            return opts.inverse(this);
+        });
+
+        Handlebars.registerHelper('isRoot', function(role) {
+            if (role == 'root') {
+                return true;
+            }
+            return false;
+        });
+    }
 });
-
-
-//Add pagination
-Cocktail.mixin(PoolsView, PaginationMixin);

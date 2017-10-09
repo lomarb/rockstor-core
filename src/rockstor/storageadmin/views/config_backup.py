@@ -18,18 +18,15 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import os
 from rest_framework.response import Response
-from rest_framework.exceptions import NotFound
 from django.db import transaction
 from django.conf import settings
 from storageadmin.models import ConfigBackup
 from storageadmin.serializers import ConfigBackupSerializer
 from storageadmin.util import handle_exception
 import rest_framework_custom as rfc
-from django.core.management import call_command
-from system.osi import run_command
-from datetime import datetime
+from system.osi import md5sum
+from system.config_backup import backup_config
 from rest_framework.parsers import FileUploadParser, MultiPartParser
-from rest_framework import status
 from django_ztask.decorators import task
 from cli.rest_util import api_call
 import gzip
@@ -38,6 +35,7 @@ import logging
 logger = logging.getLogger(__name__)
 BASE_URL = 'https://localhost/api'
 
+
 def generic_post(url, payload):
     headers = {'content-type': 'application/json', }
     try:
@@ -45,7 +43,7 @@ def generic_post(url, payload):
                  save_error=False)
         logger.debug('Successfully created resource: %s. payload: %s' %
                      (url, payload))
-    except Exception, e:
+    except Exception as e:
         logger.error('Exception occured while creating resource: %s. '
                      'payload: %s. exception: %s. Moving on.' %
                      (url, payload, e.__str__()))
@@ -55,17 +53,23 @@ def restore_users_groups(ml):
     logger.debug('Started restoring users and groups.')
     users = []
     groups = []
+    # Dictionary to map group pk to group name. Used to re-establishes user
+    # to group name relationship.
+    groupname_from_pk = {}
     for m in ml:
         if (m['model'] == 'storageadmin.user'):
             users.append(m['fields'])
         if (m['model'] == 'storageadmin.group'):
+            groupname_from_pk[m['pk']] = m['fields']['groupname']
             groups.append(m['fields'])
 
-    #order is important, first create all the groups and then users.
+    # order is important, first create all the groups and then users.
     for g in groups:
         generic_post('%s/groups' % BASE_URL, g)
     for u in users:
-        #users are created with default(rockstor) password
+        # Replace user record 'group' field pk value with resolved group name.
+        u['group'] = groupname_from_pk[u['group']]
+        # users are created with default(rockstor) password
         u['password'] = 'rockstor'
         generic_post('%s/users' % BASE_URL, u)
     logger.debug('Finished restoring users and groups.')
@@ -78,7 +82,7 @@ def restore_samba_exports(ml):
         if (m['model'] == 'storageadmin.sambashare'):
             exports.append(m['fields'])
     for e in exports:
-        e['shares'] = [e['path'].split('/')[-1],]
+        e['shares'] = [e['path'].split('/')[-1], ]
         generic_post('%s/samba' % BASE_URL, e)
     logger.debug('Finished restoring Samba exports.')
 
@@ -93,7 +97,7 @@ def restore_afp_exports(ml):
         logger.debug('Starting Netatalk service')
         generic_post('%s/sm/services/netatalk/start' % BASE_URL, {})
     for e in exports:
-        e['shares'] = [e['path'].split('/')[-1],]
+        e['shares'] = [e['path'].split('/')[-1], ]
         generic_post('%s/netatalk' % BASE_URL, e)
     logger.debug('Finished restoring AFP exports.')
 
@@ -115,7 +119,7 @@ def restore_nfs_exports(ml):
         if (len(e['mount'].split('/')) != 3):
             logger.debug('skipping nfs export with mount: %s' % e['mount'])
             continue
-        e['shares'] = [e['mount'].split('/')[2],]
+        e['shares'] = [e['mount'].split('/')[2], ]
         payload = dict(export_groups[e['export_group']], **e)
         generic_post('%s/nfs-exports' % BASE_URL, payload)
     generic_post('%s/adv-nfs-exports' % BASE_URL, adv_exports)
@@ -152,64 +156,37 @@ def restore_config(cbid):
     restore_nfs_exports(sa_ml)
     restore_afp_exports(sa_ml)
     restore_services(sm_ml)
-    #restore_dashboard(ml)
-    #restore_appliances(ml)
-    #restore_network(sa_ml)
-    #restore_scheduled_tasks(ml)
-    #restore_rockons(ml)
+    # restore_dashboard(ml)
+    # restore_appliances(ml)
+    # restore_network(sa_ml)
+    # restore_scheduled_tasks(ml)
+    # restore_rockons(ml)
+
 
 class ConfigBackupMixin(object):
     serializer_class = ConfigBackupSerializer
-    cb_dir = os.path.join(settings.MEDIA_ROOT, 'config-backups')
-
-    @staticmethod
-    def _md5sum(fp):
-        return run_command(['/usr/bin/md5sum', fp])[0][0].split()[0]
 
 
 class ConfigBackupListView(ConfigBackupMixin, rfc.GenericView):
 
     def get_queryset(self, *args, **kwargs):
         for cbo in ConfigBackup.objects.all():
-            fp = os.path.join(self.cb_dir, cbo.filename)
+            fp = os.path.join(ConfigBackup.cb_dir(), cbo.filename)
             if (not os.path.isfile(fp)):
                 cbo.delete()
-            md5sum = self._md5sum(fp)
-            if (md5sum != cbo.md5sum):
+            fp_md5sum = md5sum(fp)
+            if (fp_md5sum != cbo.md5sum):
                 logger.error('md5sum mismatch for %s. cbo: %s file: %s. '
                              'Deleting dbo' %
-                             (cbo.filename, cbo.md5sum, md5sum))
+                             (cbo.filename, cbo.md5sum, fp_md5sum))
                 cbo.delete()
         return ConfigBackup.objects.filter().order_by('-id')
 
     @transaction.atomic
     def post(self, request):
-        models = {'storageadmin':
-                  ['user', 'group', 'sambashare', 'netatalkshare', 'nfsexport',
-                   'nfsexportgroup', 'advancednfsexport', ],
-                  'smart_manager':
-                  ['service', ], }
-        model_list = []
-        for a in models:
-            for m in models[a]:
-                model_list.append('%s.%s' % (a, m))
-        logger.debug('model list = %s' % model_list)
+        logger.debug('backing up config...')
         with self._handle_exception(request):
-            filename = ('backup-%s.json' % datetime.now().strftime('%Y-%m-%d-%H%M%S'))
-            if (not os.path.isdir(self.cb_dir)):
-                os.mkdir(self.cb_dir)
-            fp = os.path.join(self.cb_dir, filename)
-            with open(fp, 'w') as dfo:
-                call_command('dumpdata', *model_list, stdout=dfo)
-                dfo.write('\n')
-                call_command('dumpdata', database='smart_manager', *model_list, stdout=dfo)
-            run_command(['/usr/bin/gzip', fp])
-            gz_name = ('%s.gz' % filename)
-            fp = os.path.join(self.cb_dir, gz_name)
-            md5sum = self._md5sum(fp)
-            size = os.stat(fp).st_size
-            cbo = ConfigBackup(filename=gz_name, md5sum=md5sum, size=size)
-            cbo.save()
+            cbo = backup_config()
             return Response(ConfigBackupSerializer(cbo).data)
 
 
@@ -218,8 +195,8 @@ class ConfigBackupDetailView(ConfigBackupMixin, rfc.GenericView):
     @transaction.atomic
     def delete(self, request, backup_id):
         with self._handle_exception(request):
-            cbo = self._validate_input(backup_id)
-            fp = os.path.join(self.cb_dir, cbo.filename)
+            cbo = self._validate_input(backup_id, request)
+            fp = os.path.join(ConfigBackup.cb_dir(), cbo.filename)
             if (os.path.isfile(fp)):
                 os.remove(fp)
             cbo.delete()
@@ -230,22 +207,22 @@ class ConfigBackupDetailView(ConfigBackupMixin, rfc.GenericView):
         with self._handle_exception(request):
             command = request.data.get('command', 'restore')
             if (command == 'restore'):
-                cbo = self._validate_input(backup_id)
+                cbo = self._validate_input(backup_id, request)
                 # models that need to be restored.
-                #1. User, Group, Accesskeys?
-                #2. SambaShare
-                #3. NFSExport, NFSExportGroup
-                #4. Service configs
-                #5. Appliances?
-                #6. Scheduled Tasks
-                #7. SFTP, AFP
+                # 1. User, Group, Accesskeys?
+                # 2. SambaShare
+                # 3. NFSExport, NFSExportGroup
+                # 4. Service configs
+                # 5. Appliances?
+                # 6. Scheduled Tasks
+                # 7. SFTP, AFP
                 logger.debug('restore starting...')
                 restore_config.async(cbo.id)
                 logger.debug('restore submitted...')
         return Response()
 
     @staticmethod
-    def _validate_input(backup_id):
+    def _validate_input(backup_id, request):
         try:
             return ConfigBackup.objects.get(id=backup_id)
         except ConfigBackup.DoesNotExist:
@@ -258,14 +235,14 @@ class ConfigBackupUpload(ConfigBackupMixin, rfc.GenericView):
 
     def get_queryset(self, *args, **kwargs):
         for cbo in ConfigBackup.objects.all():
-            fp = os.path.join(self.cb_dir, cbo.filename)
+            fp = os.path.join(ConfigBackup.cb_dir(), cbo.filename)
             if (not os.path.isfile(fp)):
                 cbo.delete()
-            md5sum = self._md5sum(fp)
-            if (md5sum != cbo.md5sum):
+            fp_md5sum = md5sum(fp)
+            if (fp_md5sum != cbo.md5sum):
                 logger.error('md5sum mismatch for %s. cbo: %s file: %s. '
                              'Deleting dbo' %
-                             (cbo.filename, cbo.md5sum, md5sum))
+                             (cbo.filename, cbo.md5sum, fp_md5sum))
                 cbo.delete()
         return ConfigBackup.objects.filter().order_by('-id')
 
@@ -280,11 +257,12 @@ class ConfigBackupUpload(ConfigBackupMixin, rfc.GenericView):
             cbo = ConfigBackup.objects.create(
                 filename=filename, config_backup=file_obj
             )
-            if (not os.path.isdir(self.cb_dir)):
-                os.mkdir(self.cb_dir)
-            fp = os.path.join(self.cb_dir, filename)
+            cb_dir = ConfigBackup.cb_dir()
+            if not os.path.isdir(cb_dir):
+                os.mkdir(cb_dir)
+            fp = os.path.join(cb_dir, filename)
 
-            cbo.md5sum = self._md5sum(fp)
+            cbo.md5sum = md5sum(fp)
             cbo.size = os.stat(fp).st_size
             cbo.save()
             return Response(ConfigBackupSerializer(cbo).data)

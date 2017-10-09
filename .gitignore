@@ -36,3 +36,9 @@ nosetests.xml
 
 # Pycharm
 .idea/
+
+# Node Modules
+node_modules/
+
+# VS Code
+.vscode

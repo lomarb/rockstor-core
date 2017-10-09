@@ -16,21 +16,20 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 from storageadmin.exceptions import RockStorAPIException
-from system.osi import run_command
 from system.pkg_mgmt import rpm_build_info
-from django.conf import settings
-
+import traceback
 import logging
 logger = logging.getLogger(__name__)
 
-#module level variable so it's computed once per process.
+# module level variable so it's computed once per process.
 version = 'unknown'
 try:
     version, date = rpm_build_info('rockstor')
-except Exception, e:
+except Exception as e:
     logger.exception(e)
 
-def handle_exception(e, request, e_msg=None):
+
+def handle_exception(e, request, e_msg=None, status_code=500):
     """
     if e_msg is provided, exception is raised with that string. This is useful
     for optionally humanizing the message. Otherwise, error from the exception
@@ -42,11 +41,7 @@ def handle_exception(e, request, e_msg=None):
     else:
         e_msg = e.__str__()
 
-    logger.error('request path: %s method: %s data: %s' %
-                 (request.path, request.method, request.data))
     logger.exception('exception: %s' % e.__str__())
     logger.debug('Current Rockstor version: %s' % version)
-    fpath = '%ssrc/rockstor/logs/error.tgz' % settings.ROOT_DIR
-    logdir = '%svar/log' % settings.ROOT_DIR
-    run_command(['/usr/bin/tar', '-c', '-z', '-f', fpath, logdir], throw=False)
-    raise RockStorAPIException(detail=e_msg)
+    raise RockStorAPIException(status_code=status_code, detail=e_msg,
+                               trace=traceback.format_exc())

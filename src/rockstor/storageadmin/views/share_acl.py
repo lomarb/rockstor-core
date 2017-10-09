@@ -19,11 +19,9 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 from rest_framework.response import Response
 from django.db import transaction
 from django.conf import settings
-from storageadmin.models import (Share, Disk)
-from storageadmin.util import handle_exception
+from storageadmin.models import Share
 from storageadmin.serializers import ShareSerializer
-from storageadmin.exceptions import RockStorAPIException
-from fs.btrfs import (mount_share, is_share_mounted, umount_root)
+from fs.btrfs import (mount_share, umount_root)
 from storageadmin.views import ShareListView
 from system.acl import (chown, chmod)
 
@@ -31,9 +29,9 @@ from system.acl import (chown, chmod)
 class ShareACLView(ShareListView):
 
     @transaction.atomic
-    def post(self, request, sname):
+    def post(self, request, sid):
         with self._handle_exception(request):
-            share = Share.objects.get(name=sname)
+            share = Share.objects.get(id=sid)
             options = {
                 'owner': 'root',
                 'group': 'root',
@@ -55,7 +53,7 @@ class ShareACLView(ShareListView):
 
             mnt_pt = ('%s%s' % (settings.MNT_PT, share.name))
             force_mount = False
-            if (not is_share_mounted(share.name)):
+            if not share.is_mounted:
                 mount_share(share, mnt_pt)
                 force_mount = True
             chown(mnt_pt, options['owner'], options['group'],

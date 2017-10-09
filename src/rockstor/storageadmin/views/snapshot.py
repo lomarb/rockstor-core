@@ -1,5 +1,5 @@
 """
-Copyright (c) 2012-2013 RockStor, Inc. <http://rockstor.com>
+Copyright (c) 2012-2017 RockStor, Inc. <http://rockstor.com>
 This file is part of RockStor.
 
 RockStor is free software; you can redistribute it and/or modify
@@ -16,20 +16,13 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-"""
-View for things at snapshot level
-"""
-
-from datetime import datetime
-from django.utils.timezone import utc
 from rest_framework.response import Response
 from django.db import transaction
 from django.conf import settings
-from storageadmin.models import (Snapshot, Share, Disk, NFSExport,
+from storageadmin.models import (Snapshot, Share, NFSExport,
                                  NFSExportGroup, AdvancedNFSExport)
-from smart_manager.models import ShareUsage
-from fs.btrfs import (add_snap, share_id, share_usage, remove_snap,
-                      umount_root, mount_snap, snaps_info, qgroup_assign)
+from fs.btrfs import (add_snap, share_id, volume_usage, remove_snap,
+                      umount_root, mount_snap, qgroup_assign)
 from system.osi import refresh_nfs_exports
 from storageadmin.serializers import SnapshotSerializer
 from storageadmin.util import handle_exception
@@ -48,12 +41,13 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
     def get_queryset(self, *args, **kwargs):
         with self._handle_exception(self.request):
             try:
-                share = Share.objects.get(name=self.kwargs['sname'])
+                share = Share.objects.get(id=self.kwargs['sid'])
             except:
-                if ('sname' not in self.kwargs):
+                if ('sid' not in self.kwargs):
                     return Snapshot.objects.filter().order_by('-id')
 
-                e_msg = ('Share with name: %s does not exist' % self.kwargs['sname'])
+                e_msg = ('Share with id: {} does not exist'.format(
+                    self.kwargs['sid']))
                 handle_exception(Exception(e_msg), self.request)
 
             if ('snap_name' in self.kwargs):
@@ -99,7 +93,7 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
                     export.delete()
                 except NFSExport.DoesNotExist:
                     pass
-                except Exception, e:
+                except Exception as e:
                     logger.exception(e)
                 finally:
                     umount_root(export_pt)
@@ -111,7 +105,8 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
         refresh_nfs_exports(exports)
 
     @transaction.atomic
-    def _create(self, share, snap_name, request, uvisible, snap_type, writable):
+    def _create(self, share, snap_name, request, uvisible,
+                snap_type, writable):
         if (Snapshot.objects.filter(share=share, name=snap_name).exists()):
             e_msg = ('Snapshot(%s) already exists for the Share(%s).' %
                      (snap_name, share.name))
@@ -121,12 +116,12 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
         qgroup_id = '0/na'
         if (snap_type == 'replication'):
             writable = False
-        add_snap(share.pool, share.subvol_name, snap_name, readonly=not
-                 writable)
+        add_snap(share.pool, share.subvol_name, snap_name, writable)
         snap_id = share_id(share.pool, snap_name)
         qgroup_id = ('0/%s' % snap_id)
-        qgroup_assign(qgroup_id, share.pqgroup, ('%s/%s' % (settings.MNT_PT, share.pool.name)))
-        snap_size, eusage = share_usage(share.pool, qgroup_id)
+        qgroup_assign(qgroup_id, share.pqgroup, ('%s/%s' % (settings.MNT_PT,
+                                                            share.pool.name)))
+        snap_size, eusage = volume_usage(share.pool, qgroup_id)
         s = Snapshot(share=share, name=snap_name, real_name=snap_name,
                      size=snap_size, qgroup=qgroup_id,
                      uvisible=uvisible, snap_type=snap_type,
@@ -134,17 +129,19 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
         s.save()
         return Response(SnapshotSerializer(s).data)
 
-    def post(self, request, sname, snap_name, command=None):
+    def post(self, request, sid, snap_name, command=None):
         with self._handle_exception(request):
-            share = self._validate_share(sname, request)
+            share = self._validate_share(sid, request)
             uvisible = request.data.get('uvisible', False)
             if (type(uvisible) != bool):
                 e_msg = ('uvisible must be a boolean, not %s' % type(uvisible))
                 handle_exception(Exception(e_msg), request)
 
             snap_type = request.data.get('snap_type', 'admin')
-            writable = request.data.get('writable', 'rw')
-            writable = True if (writable == 'rw') else False
+            writable = request.data.get('writable', False)
+            if (type(writable) != bool):
+                e_msg = ('writable must be a boolean, not %s' % type(writable))
+                handle_exception(Exception(e_msg), request)
             if (command is None):
                 ret = self._create(share, snap_name, request,
                                    uvisible=uvisible, snap_type=snap_type,
@@ -153,7 +150,7 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
                 if (uvisible):
                     try:
                         self._toggle_visibility(share, ret.data['real_name'])
-                    except Exception, e:
+                    except Exception as e:
                         msg = ('Failed to make the Snapshot(%s) visible. '
                                'Exception: %s' % (snap_name, e.__str__()))
                         logger.error(msg)
@@ -161,9 +158,10 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
 
                     try:
                         toggle_sftp_visibility(share, ret.data['real_name'])
-                    except Exception, e:
+                    except Exception as e:
                         msg = ('Failed to make the Snapshot(%s) visible for '
-                               'SFTP. Exception: %s' % (snap_name, e.__str__()))
+                               'SFTP. Exception: %s' %
+                               (snap_name, e.__str__()))
                         logger.error(msg)
                         logger.exception(e)
 
@@ -177,16 +175,16 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
             handle_exception(Exception(e_msg), request)
 
     @staticmethod
-    def _validate_share(sname, request):
+    def _validate_share(sid, request):
         try:
-            return Share.objects.get(name=sname)
+            return Share.objects.get(id=sid)
         except:
-            e_msg = ('Share: %s does not exist' % sname)
+            e_msg = ('Share with id: {} does not exist'.format(sid))
             handle_exception(Exception(e_msg), request)
 
     @transaction.atomic
-    def _delete_snapshot(self, request, sname, id=None, snap_name=None):
-        share = self._validate_share(sname, request)
+    def _delete_snapshot(self, request, sid, id=None, snap_name=None):
+        share = self._validate_share(sid, request)
         try:
             snapshot = None
             if (id is not None):
@@ -207,11 +205,11 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
             self._toggle_visibility(share, snapshot.real_name, on=False)
             toggle_sftp_visibility(share, snapshot.real_name, on=False)
 
-        remove_snap(share.pool, sname, snapshot.name)
+        remove_snap(share.pool, share.name, snapshot.name)
         snapshot.delete()
         return Response()
 
-    def delete(self, request, sname, snap_name=None):
+    def delete(self, request, sid, snap_name=None):
         """
         deletes a snapshot
         """
@@ -220,7 +218,7 @@ class SnapshotView(NFSExportMixin, rfc.GenericView):
                 snap_qp = self.request.query_params.get('id', None)
                 if (snap_qp is not None):
                     for si in snap_qp.split(','):
-                        self._delete_snapshot(request, sname, id=si)
+                        self._delete_snapshot(request, sid, id=si)
             else:
-                self._delete_snapshot(request, sname, snap_name=snap_name)
+                self._delete_snapshot(request, sid, snap_name=snap_name)
             return Response()

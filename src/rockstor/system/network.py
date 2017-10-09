@@ -16,12 +16,18 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-import re
 import json
-from osi import run_command
+import logging
+import re
+
+from .exceptions import CommandException
+from .osi import run_command
 
 
 NMCLI = '/usr/bin/nmcli'
+DEFAULT_MTU = 1500
+logger = logging.getLogger(__name__)
+
 
 def val(s):
     fields = s.split(': ')
@@ -45,7 +51,16 @@ def devices():
             'mtu': None,
             'state': None,
         }
-        o2, e2, r2 = run_command([NMCLI, 'd', 'show', dev])
+        try:
+            o2, e2, r2 = run_command([NMCLI, 'd', 'show', dev])
+        except CommandException as e:
+            # especially veth devices can vanish abruptly sometimes.
+            if e.rc == 10:
+                logger.exception(e)
+                logger.debug('device: {} vanished. Discarding it'.format(dev))
+                continue
+            raise
+
         for l in o2:
             if (re.match('GENERAL.TYPE:', l) is not None):
                 tmap['dtype'] = val(l)
@@ -76,20 +91,30 @@ def connections():
     for uuid in o:
         if (len(uuid.strip()) == 0):
             continue
-        tmap = {'name': None,
-                'state': None,
-                'ipv4_method': None,
-                'ipv4_addresses': [],
-                'ipv4_gw': None,
-                'ipv4_dns': [],
-                'ipv4_dns_search': None,
-                'ipv6_method': None,
-                'ipv6_addresses': None,
-                'ipv6_gw': None,
-                'ipv6_dns': None,
-                'ipv6_dns_search': None,
+        tmap = {
+            'name': None,
+            'state': None,
+            'ipv4_method': None,
+            'ipv4_addresses': [],
+            'ipv4_gw': None,
+            'ipv4_dns': [],
+            'ipv4_dns_search': None,
+            'ipv6_method': None,
+            'ipv6_addresses': None,
+            'ipv6_gw': None,
+            'ipv6_dns': None,
+            'ipv6_dns_search': None,
         }
-        o2, e2, rc2 = run_command([NMCLI, 'c', 'show', uuid,])
+        try:
+            o2, e2, rc2 = run_command([NMCLI, 'c', 'show', uuid, ])
+        except CommandException as e:
+            # in case the connection disappears
+            if e.rc == 10:
+                logger.exception(e)
+                logger.debug('connection: {} vanished. Discarding it'.format(
+                    uuid))
+                continue
+            raise e
         for l in o2:
             if (re.match('ipv4.method:', l) is not None):
                 tmap['ipv4_method'] = val(l)
@@ -130,29 +155,32 @@ def connections():
                     tmap[tmap['ctype']] = {}
 
             elif (re.match('connection.master:', l) is not None):
-                #for team, bond and bridge type connections.
+                # for team, bond and bridge type connections.
                 master = val(l)
                 if (master is not None):
                     tmap['master'] = master
-            elif (re.match('802-3-ethernet.mac-address:', l) is not None
-                  and tmap['ctype'] == '802-3-ethernet'):
+            elif (re.match('802-3-ethernet.mac-address:', l) is not None and
+                  tmap['ctype'] == '802-3-ethernet'):
                 tmap[tmap['ctype']]['mac'] = val(l)
-            elif (re.match('802-3-ethernet.cloned-mac-address:', l) is not None
-                  and tmap['ctype'] == '802-3-ethernet'):
+            elif (re.match('802-3-ethernet.cloned-mac-address:', l) is not
+                  None and tmap['ctype'] == '802-3-ethernet'):
                 tmap[tmap['ctype']]['cloned_mac'] = val(l)
-            elif (re.match('802-3-ethernet.mtu:', l) is not None
-                  and tmap['ctype'] == '802-3-ethernet'):
+            elif (re.match('802-3-ethernet.mtu:', l) is not None and
+                  tmap['ctype'] == '802-3-ethernet'):
                 tmap[tmap['ctype']]['mtu'] = val(l)
 
             elif (re.match('team.config:', l) is not None and
                   tmap['ctype'] == 'team'):
-                tmap[tmap['ctype']]['config'] = l.split('team.config:')[1].strip()
+                tmap[tmap['ctype']]['config'] = l.split(
+                    'team.config:')[1].strip()
             elif (re.match('bond.options:', l) is not None and
                   tmap['ctype'] == 'bond'):
                 options = l.split('bond.options:')[1].strip()
                 options_l = options.split('=')
-                #@todo: there may be more options. for now, we just care about mode.
-                tmap[tmap['ctype']]['config'] = json.dumps({options_l[0]: options_l[1]})
+                # @todo: there may be more options. for now, we just care about
+                # mode.
+                tmap[tmap['ctype']]['config'] = json.dumps(
+                    {options_l[0]: options_l[1]})
         tmap['ipv4_addresses'] = flatten(tmap['ipv4_addresses'])
         tmap['ipv4_dns'] = flatten(tmap['ipv4_dns'])
         cmap[uuid] = tmap
@@ -179,7 +207,8 @@ def reload_connection(uuid):
     return run_command([NMCLI, 'c', 'reload', uuid])
 
 
-def new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains):
+def new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains,
+                          mtu=DEFAULT_MTU):
     manual = False
     if (ipaddr is not None and len(ipaddr.strip()) > 0):
         manual = True
@@ -192,15 +221,22 @@ def new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains):
     if (dns_servers is not None and len(dns_servers.strip()) > 0):
         run_command([NMCLI, 'c', 'mod', name, 'ipv4.dns', dns_servers])
     if (search_domains is not None and len(search_domains.strip()) > 0):
-        run_command([NMCLI, 'c', 'mod', name, 'ipv4.dns-search', search_domains])
+        run_command([NMCLI, 'c', 'mod', name, 'ipv4.dns-search',
+                     search_domains])
+    if (mtu != DEFAULT_MTU):
+        # no need to set it if it's default value
+        run_command([NMCLI, 'c', 'mod', name, '802-3-ethernet.mtu', mtu])
 
 
 def new_ethernet_connection(name, ifname, ipaddr=None, gateway=None,
-                            dns_servers=None, search_domains=None):
+                            dns_servers=None, search_domains=None,
+                            mtu=DEFAULT_MTU):
     run_command([NMCLI, 'c', 'add', 'type', 'ethernet', 'con-name', name,
                  'ifname', ifname])
-    new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains)
-    #@todo: probably better to get the uuid and reload with it instead of name.
+    new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains,
+                          mtu=mtu)
+    # @todo: probably better to get the uuid and reload with it instead of
+    # name.
     reload_connection(name)
 
 
@@ -214,14 +250,16 @@ def new_member_helper(name, members, mtype):
         run_command([NMCLI, 'c', 'up', mname])
 
 
-#keeping new_team_connection and new_bond_connection separate even though they
-#are very similar. We should consolidate after we are able to support all
-#common config parameters in both modes.
+# keeping new_team_connection and new_bond_connection separate even though they
+# are very similar. We should consolidate after we are able to support all
+# common config parameters in both modes.
 def new_team_connection(name, config, members, ipaddr=None, gateway=None,
-                        dns_servers=None, search_domains=None):
+                        dns_servers=None, search_domains=None,
+                        mtu=DEFAULT_MTU):
     run_command([NMCLI, 'c', 'add', 'type', 'team', 'con-name', name, 'ifname',
                  name, 'config', config])
-    new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains)
+    new_connection_helper(name, ipaddr, gateway, dns_servers, search_domains,
+                          mtu)
     new_member_helper(name, members, 'team-slave')
     reload_connection(name)
 

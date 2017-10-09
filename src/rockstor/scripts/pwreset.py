@@ -17,16 +17,14 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
 import sys
-import os
 import pwd
-os.environ['DJANGO_SETTINGS_MODULE'] = 'settings'
 from django.db import transaction
 from django.contrib.auth.models import User as DjangoUser
 from storageadmin.models import User
-from system.users import (usermod, smbpasswd)
+from system import users
 
 
-@transaction.commit_on_success
+@transaction.atomic
 def change_password(username, password):
     try:
         duser = DjangoUser.objects.get(username=username)
@@ -36,7 +34,7 @@ def change_password(username, password):
         sys.exit('username: %s does not exist in the admin database' %
                  username)
     try:
-        user = User.objects.get(username=username)
+        User.objects.get(username=username)
     except:
         sys.exit('username: %s does not exist in the database' % username)
 
@@ -46,15 +44,16 @@ def change_password(username, password):
         sys.exit('username: %s does not exist in the system' % username)
 
     try:
-        usermod(username, password)
-        smbpasswd(username, password)
+        users.usermod(username, password)
+        users.smbpasswd(username, password)
     except:
         sys.exit('Low level error occured while changing password of user: %s'
-        % username)
+                 % username)
+
 
 def main():
     if (len(sys.argv) < 3 or
-        (len(sys.argv) > 1 and sys.argv[1] == '-h')):
+            (len(sys.argv) > 1 and sys.argv[1] == '-h')):
         sys.exit('Usage: pwreset <username> <new_password>')
 
     try:

@@ -69,15 +69,6 @@ USE_L10N = True
 # If you set this to False, Django will not use timezone-aware datetimes.
 USE_TZ = True
 
-# Absolute filesystem path to the directory that will hold user-uploaded files.
-# Example: "/home/media/media.lawrence.com/media/"
-MEDIA_ROOT = ''
-
-# URL that handles the media served from MEDIA_ROOT. Make sure to use a
-# trailing slash.
-# Examples: "http://media.lawrence.com/media/", "http://example.com/media/"
-MEDIA_URL = ''
-
 # Absolute path to the directory static files should be collected to.
 # Don't put anything in this directory yourself; store your static files
 # in apps' "static/" subdirectories and in STATICFILES_DIRS.
@@ -96,6 +87,9 @@ MEDIA_URL = '/media/'
 # Absolute filesystem path to the directory that will hold user-uploaded files.
 # Example: "/home/media/media.lawrence.com/media/"
 MEDIA_ROOT = os.path.join('${buildout:depdir}', 'static')
+
+# Absolute filesystem path where config backups are stored by default
+DEFAULT_CB_DIR = os.path.join(MEDIA_ROOT, 'config-backups')
 
 # Additional locations of static files
 #STATICFILES_DIRS = (
@@ -162,59 +156,48 @@ INSTALLED_APPS = (
     'pipeline',
     'rest_framework',
     'smart_manager',
-    'south',
     'oauth2_provider',
     'django_ztask',
 )
 
 STATICFILES_STORAGE = 'pipeline.storage.PipelineCachedStorage'
 
-#yum install npm, then npm install yuglify, then ln -s ..../yuglify /usr/bin/yuglify
-#using yuglify compresses js and css to some extent. What do we do with .jst files?
-#PIPELINE_CSS_COMPRESSOR = 'pipeline.compressors.yuglify.YuglifyCompressor'
-#PIPELINE_JS_COMPRESSOR = 'pipeline.compressors.yuglify.YuglifyCompressor'
-PIPELINE_CSS_COMPRESSOR = None
-PIPELINE_JS_COMPRESSOR = None
-
-#for handlebars
-#PIPELINE_TEMPLATE_EXT = '.handlebars'
-PIPELINE_TEMPLATE_FUNC = 'Handlebars.compile'
-#PIPELINE_TEMPLATE_NAMESPACE = 'Handlebars.templates'
-
-# Don't wrap in anonymous function so that license is at the top.
-PIPELINE_DISABLE_WRAPPER = True
-
-
-PIPELINE_JS = {
-    'storageadmin': {
-        'source_filenames': (
-            'storageadmin/js/license.js',
-            'storageadmin/js/templates/**/*.jst',
-            'storageadmin/js/templates/**/**/*.jst',
-            'storageadmin/js/socket_listen.js',
-            'storageadmin/js/rockstor.js',
-            'storageadmin/js/rockstor_widgets.js',
-            'storageadmin/js/rockstor_logger.js',
-            'storageadmin/js/paginated_collection.js',
-            'storageadmin/js/router.js',
-            'storageadmin/js/graph.js',
-            'storageadmin/js/d3.slider2.js',
-            'storageadmin/js/models/models.js',
-            'storageadmin/js/views/common/*.js',
-            'storageadmin/js/views/*.js',
-            'storageadmin/js/views/pool/**/*.js',
-            'storageadmin/js/views/dashboard/*.js',
-            ),
-        'output_filename': 'storageadmin/js/storageadmin.js'
-        },
-    }
-
+PIPELINE = {
+    'DISABLE_WRAPPER': True,
+    'JS_COMPRESSOR': None,
+    'CSS_COMPRESSOR': None,
+    'TEMPLATE_FUNC': 'Handlebars.compile',
+    'JAVASCRIPT': {
+        'storageadmin': {
+            'source_filenames': (
+                'storageadmin/js/license.js',
+                'storageadmin/js/templates/**/*.jst',
+                'storageadmin/js/templates/**/**/*.jst',
+                'storageadmin/js/socket_listen.js',
+                'storageadmin/js/rockstor.js',
+                'storageadmin/js/rockstor_widgets.js',
+                'storageadmin/js/rockstor_logger.js',
+                'storageadmin/js/paginated_collection.js',
+                'storageadmin/js/router.js',
+                'storageadmin/js/graph.js',
+                'storageadmin/js/d3.slider2.js',
+                'storageadmin/js/models/models.js',
+                'storageadmin/js/views/common/*.js',
+                'storageadmin/js/views/*.js',
+                'storageadmin/js/views/pool/**/*.js',
+                'storageadmin/js/views/dashboard/*.js',
+                ),
+            'output_filename': 'storageadmin/js/storageadmin.js'
+            },
+        }
+}
 
 # A sample logging configuration. The only tangible logging
 # performed by this configuration is to send an email to
 # the site admins on every HTTP 500 error when DEBUG=False.
 # See http://docs.djangoproject.com/en/dev/topics/logging for
 # more details on how to customize your logging configuration.
+LOG_LEVEL = 'DEBUG' if DEBUG else 'INFO'
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -236,7 +219,7 @@ LOGGING = {
             'class': 'django.utils.log.AdminEmailHandler'
         },
         'file': {
-            'level': 'DEBUG',
+            'level': LOG_LEVEL,
             'class': 'logging.handlers.RotatingFileHandler',
             'filename': '${django-settings-conf:logfile}',
             'maxBytes': 1000000,
@@ -252,24 +235,29 @@ LOGGING = {
         },
         'storageadmin': {
             'handlers': ['file'],
-            'level': 'DEBUG',
+            'level': LOG_LEVEL,
+            'propagate': True,
         },
         'smart_manager': {
             'handlers': ['file'],
-            'level': 'DEBUG',
+            'level': LOG_LEVEL,
+            'propagate': True,
         },
-	'system': {
-		  'handlers': ['file'],
-		  'level': 'DEBUG',
-	},
-	'scripts': {
-		   'handlers': ['file'],
-		   'level': 'DEBUG',
-	},
-	'fs': {
-	      'handlers': ['file'],
-	      'level': 'DEBUG',
-	},
+        'system': {
+            'handlers': ['file'],
+            'level': LOG_LEVEL,
+            'propagate': True,
+        },
+        'scripts': {
+            'handlers': ['file'],
+            'level': LOG_LEVEL,
+            'propagate': True,
+        },
+        'fs': {
+            'handlers': ['file'],
+            'level': LOG_LEVEL,
+            'propagate': True,
+        },
     }
 }
 
@@ -284,7 +272,6 @@ TEMPLATE_CONTEXT_PROCESSORS = (
    "django.core.context_processors.request"
 )
 
-SMB_CONF = '${django-settings-conf:smb_conf}'
 MNT_PT = '/mnt2/'
 NFS_EXPORT_ROOT = '/export/'
 SFTP_MNT_ROOT = '/mnt3/'
@@ -392,6 +379,13 @@ NUT_LISTEN_ON_IP = '0.0.0.0'
 # The command that the root part of upsmon uses to shutdown the system.
 NUT_SYSTEM_SHUTDOWNCMD = '/sbin/shutdown -h +0'
 
+# Shell In A Box base settings
+SHELLINABOX = {
+	'user': 'root',
+	'group': 'root',
+	'port': '4200',
+	'certs': '/var/lib/shellinabox'
+}
 
 UPDATE_CHANNELS = {
 		'stable': {
@@ -402,7 +396,7 @@ UPDATE_CHANNELS = {
 		'testing': {
 		'name': 'Testing',
 		'description': 'Subscription channel for testing updates',
-		'url': 'rockstor.com/rockrepo-testing',
+                'url': 'updates.rockstor.com:8999/rockstor-testing',
 		},
 }
 
@@ -417,3 +411,5 @@ ZTASKD_URL = 'ipc:///var/run/rockon-ztaskd'
 TASK_SCHEDULER = {
 	       'max_log': 100 #max number of task log entries to keep
 }
+
+OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth2_provider.Application'

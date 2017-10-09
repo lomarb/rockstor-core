@@ -41,10 +41,10 @@ class AFPServiceView(BaseServiceDetailView):
             yield
         except RockStorAPIException:
             raise
-        except Exception, e:
+        except Exception as e:
             handle_exception(e, request, msg)
 
-    @transaction.commit_on_success
+    @transaction.atomic
     def post(self, request, command):
         """
         execute a command on the service

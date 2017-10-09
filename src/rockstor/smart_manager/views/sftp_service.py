@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 class SFTPServiceView(BaseServiceDetailView):
 
-    @transaction.commit_on_success
+    @transaction.atomic
     def post(self, request, command):
         """
         execute a command on the service
@@ -41,7 +41,7 @@ class SFTPServiceView(BaseServiceDetailView):
             try:
                 config = request.data['config']
                 self._save_config(service, config)
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
                 e_msg = ('SFTP could not be configured. Try again')
                 handle_exception(Exception(e_msg), request)
@@ -52,7 +52,7 @@ class SFTPServiceView(BaseServiceDetailView):
                     toggle_sftp_service()
                 else:
                     toggle_sftp_service(switch=False)
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
                 e_msg = ('Failed to %s SFTP due to a system error.' % command)
                 handle_exception(Exception(e_msg), request)

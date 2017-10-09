@@ -16,17 +16,32 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
+import json
 from django.db import models
 from storageadmin.models import Pool
-from system.osi import get_disk_power_status, get_dev_byid_name, \
-    read_hdparm_setting, get_disk_APM_level
+from system.osi import get_disk_power_status, read_hdparm_setting, \
+    get_disk_APM_level, get_dev_temp_name
+
+
+class AttachedManager(models.Manager):
+    """Manager subclass to return only attached disks"""
+    use_for_related_fields = True
+    def attached(self):
+        # Return default queryset after excluding name="detached-*" items.
+        # Alternative lookup type __regex=r'^detached-'
+        query_set = self.get_queryset()
+        return query_set.exclude(name__startswith='detached-')
 
 
 class Disk(models.Model):
     """Pool can be null for disks that are not part of any pool currently"""
     pool = models.ForeignKey(Pool, null=True, on_delete=models.SET_NULL)
-    """typically sda, sdb etc.. max_length = 0 supports 100s of disks"""
-    name = models.CharField(max_length=64, unique=True)
+    """Previously the name field contained sda, sdb etc..  Revised to contain
+    device names for use with the udev created links at /dev/disk/by-id/ which
+    in turn are symlinks to sda, sdb etc.  eg ata-QEMU_HARDDISK_QM00005 ie
+    mostly derived from model and serial number.
+    """
+    name = models.CharField(max_length=128, unique=True)
     """total size in KB"""
     size = models.BigIntegerField(default=0)
     """true if disk went offline"""
@@ -52,7 +67,11 @@ class Disk(models.Model):
     {"mdraid": "linux_raid_member"}.
     role can be Null if no flags are in use.
     """
-    role = models.CharField(max_length=256, null=True)
+    role = models.CharField(max_length=1024, null=True)
+
+    # The default manager is the first defined.
+    attached = AttachedManager()  # Only return attached Disk objects.
+    objects = models.Manager()  # Ensure Object manager is still accessible.
 
     @property
     def pool_name(self, *args, **kwargs):
@@ -71,7 +90,7 @@ class Disk(models.Model):
     @property
     def hdparm_setting(self, *args, **kwargs):
         try:
-            return read_hdparm_setting(get_dev_byid_name(self.name))
+            return read_hdparm_setting(str(self.name))
         except:
             return None
 
@@ -81,6 +100,32 @@ class Disk(models.Model):
             return get_disk_APM_level(str(self.name))
         except:
             return None
+
+    @property
+    def temp_name(self, *args, **kwargs):
+        try:
+            return get_dev_temp_name(str(self.name))
+        except:
+            return None
+
+    @property
+    def target_name(self, *args, **kwargs):
+        """
+        Helper method to enable easier retrieval of a (re)direct role
+        name, if any. Allows for Disk.target_name which substitutes a
+        redirect role enforced name (eg to a partition) or fails over
+        to disk.name if no redirect role is in play or an exception is
+        encountered.
+        :return: role redirected name if any, otherwise return name.
+        """
+        try:
+            if self.role is not None:
+                disk_role_dict = json.loads(self.role)
+                if 'redirect' in disk_role_dict:
+                    return disk_role_dict.get('redirect', self.name)
+            return self.name
+        except:
+            return self.name
 
     class Meta:
         app_label = 'storageadmin'

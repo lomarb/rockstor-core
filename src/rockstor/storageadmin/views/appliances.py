@@ -16,12 +16,10 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
 
-import requests
-import json
-import uuid
 from rest_framework.response import Response
 from django.db import transaction
-from storageadmin.models import Appliance
+from storageadmin.models import (Appliance, EmailClient)
+from storageadmin.views.email_client import update_generic
 from storageadmin.util import handle_exception
 from storageadmin.serializers import ApplianceSerializer
 
@@ -61,7 +59,7 @@ class ApplianceListView(rfc.GenericView):
             try:
                 set_token(client_id=client_id, client_secret=client_secret,
                           url=base_url)
-            except Exception, e:
+            except Exception as e:
                 e_msg = ('Failed to authenticate on remote appliance. Verify '
                          'port number, id and secret are correct and try '
                          'again.')
@@ -70,12 +68,11 @@ class ApplianceListView(rfc.GenericView):
                 ad = api_call('%s/api/appliances/1' % base_url,
                               save_error=False)
                 return ad['uuid']
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
                 e_msg = ('Failed to get remote appliance information. Verify '
                          'all inputs and try again.')
                 handle_exception(Exception(e_msg), request)
-
 
     @transaction.atomic
     def post(self, request, *args, **kwargs):
@@ -97,7 +94,7 @@ class ApplianceListView(rfc.GenericView):
                     raise Exception('Secret is required')
                 try:
                     mgmt_port = int(request.data['mgmt_port'])
-                except Exception, e:
+                except Exception as e:
                     logger.exception(e)
                     e_msg = ('Invalid management port(%s) supplied. Try '
                              'again' % request.data['mgmt_port'])
@@ -112,9 +109,7 @@ class ApplianceListView(rfc.GenericView):
                                       client_secret=client_secret)
                 appliance.save()
             else:
-                appliance_uuid = ('%s-%s' % (hostid()[0][0],
-                                             str(uuid.uuid4())))
-                appliance = Appliance(uuid=appliance_uuid, ip=ip,
+                appliance = Appliance(uuid=hostid(), ip=ip,
                                       current_appliance=True)
                 if ('hostname' in request.data):
                     appliance.hostname = request.data['hostname']
@@ -136,7 +131,7 @@ class ApplianceDetailView(rfc.GenericView):
     def put(self, request, appid):
         try:
             appliance = Appliance.objects.get(pk=appid)
-        except Exception, e:
+        except Exception as e:
             logger.exception(e)
             e_msg = ('Appliance(%s) does not exist' % appid)
             handle_exception(Exception(e_msg), request)
@@ -145,17 +140,21 @@ class ApplianceDetailView(rfc.GenericView):
             appliance.hostname = request.data['hostname']
             appliance.save()
             sethostname(appliance.hostname)
+            if (EmailClient.objects.count() > 0):
+                current_email = EmailClient.objects.all()[0]
+                update_generic(current_email.sender)
             return Response()
-        except Exception, e:
+        except Exception as e:
             logger.exception(e)
-            e_msg = ('Failed updating hostname for appliance with id = %d' % appid)
+            e_msg = ('Failed updating hostname for appliance with id = %d'
+                     % appid)
             handle_exception(e, request)
 
     @transaction.atomic
     def delete(self, request, appid):
         try:
             appliance = Appliance.objects.get(pk=appid)
-        except Exception, e:
+        except Exception as e:
             logger.exception(e)
             e_msg = ('Appliance(%s) does not exist' % appid)
             handle_exception(Exception(e_msg), request)
@@ -169,7 +168,7 @@ class ApplianceDetailView(rfc.GenericView):
         try:
             appliance.delete()
             return Response()
-        except Exception, e:
+        except Exception as e:
             logger.exception(e)
             e_msg = ('Delete failed for appliance with id = %d' % appid)
             handle_exception(e, request)

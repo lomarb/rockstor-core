@@ -32,11 +32,13 @@ class User(models.Model):
     uid = models.IntegerField(default=settings.START_UID)
     gid = models.IntegerField(default=settings.START_UID)
     public_key = models.CharField(max_length=4096, null=True, blank=True)
-    smb_shares = models.ManyToManyField('SambaShare', null=True,
+    smb_shares = models.ManyToManyField('SambaShare',
                                         related_name='admin_users')
     shell = models.CharField(max_length=1024, null=True)
     homedir = models.CharField(max_length=1024, null=True)
-    email = models.CharField(max_length=1024, null=True, blank=True, validators=[validate_email])
+    email = models.CharField(max_length=1024, null=True, blank=True,
+                             validators=[validate_email])
+    # 'admin' field represents indicator of Rockstor web admin capability.
     admin = models.BooleanField(default=True)
     group = models.ForeignKey(Group, null=True, blank=True)
 
@@ -46,8 +48,8 @@ class User(models.Model):
             return self.group.groupname
         if (self.gid is not None):
             groupname = grp.getgrgid(self.gid).gr_name
-            charset = chardet.detect( groupname )
-            groupname = groupname.decode( charset['encoding'] )
+            charset = chardet.detect(groupname)
+            groupname = groupname.decode(charset['encoding'])
             return groupname
         return None
 
@@ -58,6 +60,22 @@ class User(models.Model):
     @managed_user.setter
     def managed_user(self, val, *args, **kwargs):
         self.editable = val
+
+    @property
+    def has_pincard(self, *args, **kwargs):
+        return getattr(self, 'pincard_exist', False)
+
+    @has_pincard.setter
+    def has_pincard(self, val, *args, **kwargs):
+        self.pincard_exist = val
+
+    @property
+    def pincard_allowed(self, *args, **kwargs):
+        return getattr(self, 'pincard_enabled', 'no')
+
+    @pincard_allowed.setter
+    def pincard_allowed(self, val, *args, **kwargs):
+        self.pincard_enabled = val
 
     class Meta:
         app_label = 'storageadmin'

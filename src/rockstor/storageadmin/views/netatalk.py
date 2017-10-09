@@ -19,11 +19,11 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 from rest_framework.response import Response
 from django.db import transaction
 from django.conf import settings
-from storageadmin.models import (NetatalkShare, Disk)
+from storageadmin.models import NetatalkShare
 from storageadmin.util import handle_exception
 from storageadmin.serializers import NetatalkShareSerializer
 from storageadmin.exceptions import RockStorAPIException
-from fs.btrfs import (mount_share, is_share_mounted)
+from fs.btrfs import mount_share
 from system.services import (systemctl, refresh_afp_config)
 import rest_framework_custom as rfc
 from share_helpers import validate_share
@@ -83,9 +83,10 @@ class NetatalkDetailView(rfc.GenericView):
     def _refresh_and_reload(request):
         try:
             refresh_afp_config(list(NetatalkShare.objects.all()))
-            return systemctl('netatalk', 'reload')
-        except Exception, e:
-            e_msg = ('Failed to reload Netatalk server. Exception: %s' % e.__str__())
+            return systemctl('netatalk', 'reload-or-restart')
+        except Exception as e:
+            e_msg = ('Failed to reload Netatalk server. Exception: %s'
+                     % e.__str__())
             handle_exception(Exception(e_msg), request)
 
 
@@ -128,12 +129,12 @@ class NetatalkListView(rfc.GenericView):
                                      description=cur_description,
                                      time_machine=time_machine)
                 afpo.save()
-                if (not is_share_mounted(share.name)):
+                if not share.is_mounted:
                     mount_share(share, mnt_pt)
             refresh_afp_config(list(NetatalkShare.objects.all()))
-            systemctl('netatalk', 'reload')
+            systemctl('netatalk', 'reload-or-restart')
             return Response()
         except RockStorAPIException:
             raise
-        except Exception, e:
+        except Exception as e:
             handle_exception(e, request)

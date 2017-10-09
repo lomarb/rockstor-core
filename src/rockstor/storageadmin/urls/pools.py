@@ -18,20 +18,20 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 from django.conf.urls import patterns, url
 from storageadmin.views import (PoolListView, PoolDetailView, PoolScrubView,
-                                PoolBalanceView)
-from django.conf import settings
+                                PoolBalanceView, get_usage_bound,
+                                PoolShareListView)
 
-pool_regex = settings.POOL_REGEX
 
 urlpatterns = patterns(
     '',
     url(r'^$', PoolListView.as_view(), name='pool-view'),
-    url(r'^/(?P<pname>%s)$' % pool_regex, PoolDetailView.as_view(),),
-    url(r'^/(?P<pname>%s)/balance$' % pool_regex, PoolBalanceView.as_view(),),
-    url(r'^/(?P<pname>%s)/balance/(?P<command>.*)$' % pool_regex,
-        PoolBalanceView.as_view(),),
-    url(r'^/(?P<pname>%s)/scrub$' % pool_regex, PoolScrubView.as_view(),),
-    url(r'^/(?P<pname>%s)/scrub/(?P<command>.*)$' % pool_regex,
-        PoolScrubView.as_view(),),
-    url(r'^/(?P<pname>%s)/(?P<command>.*)$' % pool_regex, PoolDetailView.as_view(),),
+    url(r'^/usage_bound$', get_usage_bound),
+    url(r'^/(?P<pid>\d+)$', PoolDetailView.as_view()),
+    url(r'^/(?P<pid>\d+)/shares$', PoolShareListView.as_view(),),
+    url(r'^/(?P<pid>\d+)/balance$', PoolBalanceView.as_view(),),
+    url(r'^/(?P<pid>\d+)/balance/(?P<command>.*)$',
+        PoolBalanceView.as_view()),
+    url(r'^/(?P<pid>\d+)/scrub$', PoolScrubView.as_view(),),
+    url(r'^/(?P<pid>\d+)/scrub/(?P<command>.*)$', PoolScrubView.as_view(),),
+    url(r'^/(?P<pid>\d+)/(?P<command>.*)$', PoolDetailView.as_view(),),
 )

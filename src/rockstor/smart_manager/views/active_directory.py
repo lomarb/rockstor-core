@@ -18,7 +18,6 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import re
 import socket
-import json
 from tempfile import mkstemp
 import shutil
 from rest_framework.response import Response
@@ -48,8 +47,8 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
     @staticmethod
     def _resolve_check(domain, request):
         try:
-            res = socket.gethostbyname(domain)
-        except Exception, e:
+            socket.gethostbyname(domain)
+        except Exception as e:
             e_msg = ('Domain/Realm(%s) could not be resolved. Check '
                      'your DNS configuration and try again. '
                      'Lower level error: %s' % (domain, e.__str__()))
@@ -96,8 +95,8 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
 
     @staticmethod
     def _update_sssd(domain):
-        #add enumerate = True in sssd so user/group lists will be
-        #visible on the web-ui.
+        # add enumerate = True in sssd so user/group lists will be
+        # visible on the web-ui.
         el = 'enumerate = True\n'
         fh, npath = mkstemp()
         sssd_config = '/etc/sssd/sssd.conf'
@@ -106,14 +105,16 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
             for line in sfo.readlines():
                 if (domain_section is True):
                     if (len(line.strip()) == 0 or line[0] == '['):
-                        #empty line or new section without empty line before it.
+                        # empty line or new section without empty line before
+                        # it.
                         tfo.write(el)
                         domain_section = False
                 elif (re.match('\[domain/%s]' % domain, line) is not None):
                     domain_section = True
                 tfo.write(line)
             if (domain_section is True):
-                #reached end of file, also coinciding with end of domain section
+                # reached end of file, also coinciding with end of domain
+                # section
                 tfo.write(el)
         shutil.move(npath, sssd_config)
         systemctl('sssd', 'restart')
@@ -131,14 +132,14 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
             status_cmd = [NET, 'ads', 'status', '-U', config.get('username')]
             o, e, rc = run_command(status_cmd, input=pstr, throw=False)
             if (rc != 0):
-                return logger.debug('Status shows not joined. out: %s err: %s rc: %d' %
-                                    (o, e, rc))
+                return logger.debug('Status shows not joined. out: %s err: '
+                                    '%s rc: %d' % (o, e, rc))
             raise
 
     def _config(self, service, request):
         try:
             return self._get_config(service)
-        except Exception, e:
+        except Exception as e:
             e_msg = ('Missing configuration. Please configure the '
                      'service and try again. Exception: %s' % e.__str__())
             handle_exception(Exception(e_msg), request)
@@ -153,16 +154,16 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
                 config = request.data.get('config')
                 self._validate_config(config, request)
 
-                #1. Name resolution check
+                # 1. Name resolution check
                 self._resolve_check(config.get('domain'), request)
 
-                #2. realm discover check?
-                #@todo: phase our realm and just use net?
+                # 2. realm discover check?
+                # @todo: phase our realm and just use net?
                 domain = config.get('domain')
                 try:
                     cmd = ['realm', 'discover', '--name-only', domain]
                     o, e, rc = run_command(cmd)
-                except Exception, e:
+                except Exception as e:
                     e_msg = ('Failed to discover the given(%s) AD domain. '
                              'Error: %s' % (domain, e.__str__()))
                     handle_exception(Exception(e_msg), request)
@@ -179,7 +180,7 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
                     try:
                         rlow = int(rfields[0].strip())
                         rhigh = int(rfields[2].strip())
-                    except Exception, e:
+                    except Exception as e:
                         raise Exception('Invalid idmap range. Numbers in the '
                                         'range must be valid integers. '
                                         'Error: %s.' % e.__str__())
@@ -194,36 +195,38 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
 
             elif (command == 'start'):
                 config = self._config(service, request)
+                smbo = Service.objects.get(name='smb')
+                smb_config = self._get_config(smbo)
                 domain = config.get('domain')
-                #1. make sure ntpd is running, or else, don't start.
+                # 1. make sure ntpd is running, or else, don't start.
                 self._ntp_check(request)
-                #2. Name resolution check?
+                # 2. Name resolution check?
                 self._resolve_check(config.get('domain'), request)
 
                 if (method == 'winbind'):
                     cmd = ['/usr/sbin/authconfig', ]
-                    #nss
-                    cmd += ['--enablewinbind', '--enablewins',]
-                    #pam
-                    cmd += ['--enablewinbindauth',]
-                    #smb
-                    cmd += ['--smbsecurity', 'ads', '--smbrealm', domain.upper(),]
-                    #kerberos
-                    cmd += ['--krb5realm=%s' % domain.upper(),]
-                    #winbind
+                    # nss
+                    cmd += ['--enablewinbind', '--enablewins', ]
+                    # pam
+                    cmd += ['--enablewinbindauth', ]
+                    # smb
+                    cmd += ['--smbsecurity', 'ads', '--smbrealm',
+                            domain.upper(), ]
+                    # kerberos
+                    cmd += ['--krb5realm=%s' % domain.upper(), ]
+                    # winbind
                     cmd += ['--enablewinbindoffline', '--enablewinbindkrb5',
-                            '--winbindtemplateshell=/bin/sh',]
-                    #general
-                    cmd += ['--update', '--enablelocauthorize',]
+                            '--winbindtemplateshell=/bin/sh', ]
+                    # general
+                    cmd += ['--update', '--enablelocauthorize', ]
                     run_command(cmd)
-                workgroup = self._domain_workgroup(domain, method=method)
-                update_global_config(workgroup, domain, config.get('idmap_range'), config.get('rfc2307'))
+                config['workgroup'] = self._domain_workgroup(domain,
+                                                             method=method)
+                self._save_config(service, config)
+                update_global_config(smb_config, config)
                 self._join_domain(config, method=method)
                 if (method == 'sssd' and config.get('enumerate') is True):
                     self._update_sssd(domain)
-                so = Service.objects.get(name='smb')
-                so.config = json.dumps({'workgroup': workgroup})
-                so.save()
 
                 if (method == 'winbind'):
                     systemctl('winbind', 'enable')
@@ -235,10 +238,12 @@ class ActiveDirectoryServiceView(BaseServiceDetailView):
                 config = self._config(service, request)
                 try:
                     self._leave_domain(config, method=method)
-                    update_global_config()
+                    smbo = Service.objects.get(name='smb')
+                    smb_config = self._get_config(smbo)
+                    update_global_config(smb_config)
                     systemctl('smb', 'restart')
                     systemctl('nmb', 'restart')
-                except Exception, e:
+                except Exception as e:
                     e_msg = ('Failed to leave AD domain(%s). Error: %s' %
                              (config.get('domain'), e.__str__()))
                     handle_exception(Exception(e_msg), request)

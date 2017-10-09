@@ -28,6 +28,7 @@ import rest_framework_custom as rfc
 from system.users import (useradd, usermod, userdel,
                           smbpasswd, add_ssh_key, update_shell)
 import pwd
+from system.pinmanager import (username_to_uid, flush_pincard)
 from system.ssh import is_pub_key
 from ug_helpers import (combined_users, combined_groups)
 import logging
@@ -47,29 +48,29 @@ class UserMixin(object):
         input_fields = {}
         username = request.data.get('username', None)
         if (username is None or
-            re.match(settings.USERNAME_REGEX, username) is None):
+                re.match(settings.USERNAME_REGEX, username) is None):
             e_msg = ('Username is invalid. It must confirm to the regex: %s' %
                      (settings.USERNAME_REGEX))
-            handle_exception(Exception(e_msg), request)
+            handle_exception(Exception(e_msg), request, status_code=400)
         if (len(username) > 30):
             e_msg = ('Username cannot be more than 30 characters long')
-            handle_exception(Exception(e_msg), request)
+            handle_exception(Exception(e_msg), request, status_code=400)
         input_fields['username'] = username
         password = request.data.get('password', None)
         if (password is None or password == ''):
             e_msg = ('Password must be a valid string')
-            handle_exception(Exception(e_msg), request)
+            handle_exception(Exception(e_msg), request, status_code=400)
         input_fields['password'] = password
         admin = request.data.get('admin', True)
         if (type(admin) != bool):
             e_msg = ('Admin(user type) must be a boolean')
-            handle_exception(Exception(e_msg), request)
+            handle_exception(Exception(e_msg), request, status_code=400)
         input_fields['admin'] = admin
         shell = request.data.get('shell', '/bin/bash')
         if (shell not in settings.VALID_SHELLS):
             e_msg = ('shell(%s) is not valid. Valid shells are %s' %
                      (shell, settings.VALID_SHELLS))
-            handle_exception(Exception(e_msg), request)
+            handle_exception(Exception(e_msg), request, status_code=400)
         input_fields['shell'] = shell
         email = request.data.get('email', None)
         input_fields['email'] = email
@@ -79,10 +80,18 @@ class UserMixin(object):
         if (input_fields['uid'] is not None):
             try:
                 input_fields['uid'] = int(input_fields['uid'])
-            except ValueError, e:
-                e_msg = ('UID must be an integer, try again. Exception: %s' % e.__str__())
-                handle_exception(Exception(e_msg), request)
-
+            except ValueError as e:
+                e_msg = ('UID must be an integer, try again. Exception: %s'
+                         % e.__str__())
+                handle_exception(Exception(e_msg), request, status_code=400)
+        input_fields['gid'] = request.data.get('gid', None)
+        if (input_fields['gid'] is not None):
+            try:
+                input_fields['gid'] = int(input_fields['gid'])
+            except ValueError as e:
+                e_msg = ('GID must be an integer, try again. Exception: %s'
+                         % e.__str__())
+                handle_exception(Exception(e_msg), request, status_code=400)
         input_fields['group'] = request.data.get('group', None)
         input_fields['public_key'] = cls._validate_public_key(request)
         return input_fields
@@ -113,23 +122,30 @@ class UserListView(UserMixin, rfc.GenericView):
                      ' username' % invar['username'])
             if (DjangoUser.objects.filter(
                     username=invar['username']).exists() or
-                User.objects.filter(username=invar['username']).exists()):
-                handle_exception(Exception(e_msg), request)
+                    User.objects.filter(username=invar['username']).exists()):
+                handle_exception(Exception(e_msg), request, status_code=400)
             users = combined_users()
             groups = combined_groups()
-            invar['gid'] = None
+            # As we have not yet established a pre-existing group, set to None.
             admin_group = None
             if (invar['group'] is not None):
+                # We have a group setting so search for existing group name
+                # match. Matching by group name has precedence over gid.
                 for g in groups:
                     if (g.groupname == invar['group']):
+                        # We have an existing group name match in invar
+                        # so overwrite requested gid to match existing gid.
                         invar['gid'] = g.gid
+                        # Set the admin_group to our existing group object.
                         admin_group = g
-                        invar['group'] = g
+                        admin_group.save()
+                        invar['group'] = g  # exchange name for db group item.
                         break
 
             for u in users:
                 if (u.username == invar['username']):
-                    handle_exception(Exception(e_msg), request)
+                    handle_exception(Exception(e_msg), request,
+                                     status_code=400)
                 elif (u.uid == invar['uid']):
                     e_msg = ('uid: %d already exists. Please choose a '
                              'different one.' % invar['uid'])
@@ -153,13 +169,29 @@ class UserListView(UserMixin, rfc.GenericView):
             if (invar['public_key'] is not None):
                 add_ssh_key(invar['username'], invar['public_key'])
             del(invar['password'])
-            if (admin_group is None):
-                admin_group = Group(gid=invar['gid'],
-                                    groupname=invar['username'],
-                                    admin=True)
-                admin_group.save()
+            if admin_group is None:
+                # We have no identified pre-existing group by name but there
+                # could still be an existing group match by gid, if so we
+                # use that group object as our new User.group foreign key link.
+                if Group.objects.filter(gid=invar['gid']).exists():
+                    admin_group = Group.objects.get(gid=invar['gid'])
+                else:
+                    # As we are creating a new group we set admin=True to
+                    # flag this group as administered by Rockstor.
+                    if invar['group'] is None:
+                        admin_group = Group(gid=invar['gid'],
+                                            groupname=invar['username'],
+                                            admin=True)
+                    else:
+                        admin_group = Group(gid=invar['gid'],
+                                            groupname=invar['group'],
+                                            admin=True)
+                    admin_group.save()  # save our new group object.
+                # set our invar dict group entry to our admin_group object.
                 invar['group'] = admin_group
+            # now we create our user object based on the contents of invar[]
             suser = User(**invar)
+            # validate and save our suser object.
             suser.full_clean()
             suser.save()
             return Response(SUserSerializer(suser).data)
@@ -193,8 +225,9 @@ class UserDetailView(UserMixin, rfc.GenericView):
                 if (admin is True):
                     if (u.user is None):
                         if (new_pw is None):
-                            e_msg = ('password reset is required to enable admin '
-                                     'access. please provide a new password')
+                            e_msg = ('password reset is required to '
+                                     'enable admin access. please provide '
+                                     'a new password')
                             handle_exception(Exception(e_msg), request)
                         auser = DjangoUser.objects.create_user(username,
                                                                None, new_pw)
@@ -272,15 +305,18 @@ class UserDetailView(UserMixin, rfc.GenericView):
 
             for g in combined_groups():
                 if (g.gid == gid and g.admin and
-                    not User.objects.filter(gid=gid).exists()):
+                        not User.objects.filter(gid=gid).exists()):
                     g.delete()
+
+            # When user deleted destroy all Pincard entries
+            flush_pincard(username_to_uid(username))
 
             try:
                 userdel(username)
-            except Exception, e:
+            except Exception as e:
                 logger.exception(e)
-                e_msg = ('A low level error occured while deleting the user: %s' %
-                         username)
+                e_msg = ('A low level error occured while deleting '
+                         'the user: %s' % username)
                 handle_exception(Exception(e_msg), request)
 
             return Response()
